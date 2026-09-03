@@ -51,6 +51,24 @@ PYTHONPATH=python/sdk/src python integrations/customer-service-api/server.py
 
 `GET /health/live` checks the HTTP process. It does not call the model or MCP server.
 
+## Build a Windows deployment bundle
+
+Run the one-click release builder from a Windows x64 checkout. It requires Windows Developer Mode,
+Node.js 24 x64, pnpm 11.7.0, and Python 3.10 x64 with the `py` launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-customer-service-windows-release.ps1
+```
+
+The builder installs immutable workspace dependencies, creates the two native Windows executables,
+builds the SDK and runtime wheels, downloads the offline Python 3.10-3.14 x64 dependency closure,
+and writes one versioned ZIP under `dist-customer-service-windows`. The archive deliberately omits
+the server-local `customer-service.model.json`; the destination server creates it from the empty-key
+example during installation.
+
+Use `-SkipInstall` only when the lockfile dependencies are already installed. Use
+`-SkipRuntimeBuild` only when the exact two current Windows executables already exist in `dist-exe`.
+
 ## Request and response
 
 The caller sends transport facts; it does not send an intended tool, answer, or evidence conclusion.

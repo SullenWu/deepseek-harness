@@ -18,6 +18,8 @@ The profile exposes product skills, read-only workspace tools, and one Streamabl
 
 Model route selection, endpoint, credential, context and output limits, reasoning effort, and provider timeout live in one server-local JSON file. DuckAI never receives those fields. The repository tracks an empty-key example and ignores the real file; one optional environment variable only relocates that file.
 
+A Windows-native release builder assembles the customer-service integration into one versioned ZIP. It builds the official `node24-win-x64` executables and both Python wheels, downloads binary Python dependency closures for CPython 3.10 through 3.14 x64, and emits offline installer and launcher scripts. The launcher points `DCS_DSH_BIN` at the visible release `runtime` executable. Executable PowerShell files contain ASCII only so Windows PowerShell 5.1 does not reinterpret UTF-8 source text using a legacy code page. The archive excludes the ignored real model configuration and includes build metadata and per-file SHA-256 hashes.
+
 ## Alternatives considered
 
 **Embed customer-service decisions in DuckAI.** This keeps the existing split where the channel service chooses tools and validates evidence. It was rejected because Harness must own the complete customer-service investigation.
@@ -29,3 +31,5 @@ Model route selection, endpoint, credential, context and output limits, reasonin
 ## Consequences
 
 The integration proves the end-to-end ownership split without changing the agent loop or SDK protocol. Process startup and serialized execution add latency and cap throughput; production hardening can replace this deployment adapter only after preserving request-specific MCP context and durable session continuation. The first deployment has no built-in HTTP authentication or TLS and is limited to raster image attachments supported by the SDK protocol. Operators must provision the ignored model file separately on every server and keep its read permissions scoped to the Harness service account.
+
+Windows release construction remains host-native because the runtime contains Windows native modules. A macOS checkout can edit and review the release definition but cannot produce the supported Windows artifact. Destination servers need only a supported x64 Python runtime; they do not need Node.js, pnpm, or network access for installation.

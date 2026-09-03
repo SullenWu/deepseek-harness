@@ -18,6 +18,8 @@ Status: implemented
 
 模型路由选择、端点、凭据、上下文与输出上限、推理强度和供应方超时统一保存在服务器本地 JSON 文件中。DuckAI 不接收这些字段。仓库只跟踪密钥为空的示例并忽略真实文件；唯一可选环境变量只负责改变该文件的位置。
 
+Windows 原生发布脚本会把客服集成组装为一个带版本号的 ZIP。它构建官方 `node24-win-x64` 两个 EXE 和两个 Python wheel，下载 CPython 3.10 至 3.14 x64 的二进制依赖闭包，并生成离线安装与启动脚本。启动脚本把 `DCS_DSH_BIN` 明确指向发布包中可见的 `runtime` 主程序。所有可执行 PowerShell 文件只使用 ASCII 字符，避免 Windows PowerShell 5.1 按旧代码页错误解析 UTF-8 源码。压缩包排除被忽略的真实模型配置，同时包含构建信息和逐文件 SHA-256 校验值。
+
 ## Alternatives considered
 
 **在 DuckAI 中保留客服决策。** 这会继续由通道服务选择工具和校验证据。此方案被拒绝，因为完整的客服调查必须由 Harness 负责。
@@ -29,3 +31,5 @@ Status: implemented
 ## Consequences
 
 该集成无需修改 Agent Loop 或 SDK 协议，即可验证端到端职责划分。进程启动和串行执行会增加延迟并限制吞吐量；生产加固只有在保留请求级 MCP 上下文和持久会话续接后才能替换此部署适配器。首版部署不内置 HTTP 身份验证或 TLS，附件仅支持 SDK 协议可接收的栅格图片。运维人员必须在每台服务器单独提供被忽略的模型文件，并把读取权限限制给 Harness 服务账号。
+
+因为运行时包含 Windows 原生模块，所以发布包仍必须在 Windows 主机上构建。macOS 工作副本可以编辑和检查发布定义，但不能产出受支持的 Windows 构件。目标服务器只需要受支持的 x64 Python，不需要 Node.js、pnpm 或联网安装依赖。
