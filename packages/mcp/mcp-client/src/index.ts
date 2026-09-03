@@ -70,6 +70,8 @@ export interface StdioConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /** Optional search-then-invoke protocol whose capability token remains host-owned. */
+  capabilityBroker?: CapabilityBrokerConfig
 }
 
 /** Config for connecting to an MCP server over Streamable HTTP (SSE). */
@@ -92,6 +94,16 @@ export interface StreamableHttpConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /** Optional search-then-invoke protocol whose capability token remains host-owned. */
+  capabilityBroker?: CapabilityBrokerConfig
+}
+
+/** Names of one MCP search/invoke pair using the capability-broker JSON fields. */
+export interface CapabilityBrokerConfig {
+  /** Raw MCP tool name that returns `candidates` and `capabilityToken`. */
+  searchToolName: string
+  /** Raw MCP tool name that consumes `toolId`, `arguments`, `references`, and `capabilityToken`. */
+  invokeToolName: string
 }
 
 /** Configuration for one stdio or Streamable HTTP MCP server. */
@@ -110,6 +122,12 @@ const Reconnect: z<ReconnectConfig> = z.object({
   maxAttempts: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(RECONNECT_DEFAULTS.maxAttempts),
 })
 
+const CapabilityBroker = z.object({
+  searchToolName: z.string().required(),
+  invokeToolName: z.string().required(),
+  // Schemastery object schemas default to {}, so clear that default to keep this block optional.
+}).default(undefined as never) as z<CapabilityBrokerConfig | undefined>
+
 export const Config = z.union([
   z.object({
     transport: z.const('stdio'),
@@ -121,6 +139,7 @@ export const Config = z.union([
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
     reconnect: Reconnect,
+    capabilityBroker: CapabilityBroker,
   }),
   z.object({
     transport: z.const('streamable-http'),
@@ -130,6 +149,7 @@ export const Config = z.union([
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
     reconnect: Reconnect,
+    capabilityBroker: CapabilityBroker,
   }),
 ]) as unknown as z<ConfigInput, Config>
 

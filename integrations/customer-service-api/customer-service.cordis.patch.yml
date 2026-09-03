@@ -90,6 +90,12 @@
   disabled: true
 
 - insert:
+    - id: customer-service-time-context
+      name: '@deepseek-ai/dsh-time-context'
+      config:
+        timeZone: Asia/Shanghai
+        refreshIntervalMs: 60000
+
     - id: customer-service-api-mcp
       name: '@deepseek-ai/dsh-mcp-client'
       config:
@@ -108,3 +114,6 @@
           requestId: !!js process.env.DCS_MCP_REQUEST_ID
         toolCallTimeoutMs: 60000
         failOnStartupError: false
+        capabilityBroker:
+          searchToolName: search_capabilities
+          invokeToolName: invoke_capability

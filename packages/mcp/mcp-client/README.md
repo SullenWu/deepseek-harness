@@ -64,6 +64,7 @@ Add one entry per server; nothing else is required. After the harness starts, th
 | `reconnect.initialDelayMs` | `500` | First reconnect delay; doubles per consecutive failed attempt |
 | `reconnect.maxDelayMs` | `30,000` | Backoff ceiling; also the uptime after which the attempt budget resets |
 | `reconnect.maxAttempts` | `10` | Consecutive failed attempts per outage before giving up |
+| `capabilityBroker.searchToolName` / `invokeToolName` | — | Optional paired protocol: keep the search token host-owned and expose a candidate-bound invoke tool only after a successful search |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-mcp-client) is the exhaustive source for every accepted field.
 
@@ -81,6 +82,8 @@ The model sees each tool under a stable server-qualified name: `mcp__<serverName
 ### Calling tools and reading results
 
 When the model calls an MCP tool, the call runs against the remote server with a per-call timeout (default 60 seconds) and can be cancelled like any other tool call. The result comes back as ordinary text in block order; resource links appear as text with their name and URI. If the server reports an error, the call fails visibly — the model does not see a fake success.
+
+For an MCP server whose search result contains `candidates` plus `capabilityToken`, configure `capabilityBroker` with the raw search and invoke names. The model initially sees the search tool but not the invoke tool. A successful non-empty search removes the token from model-visible content, stores it in that Agent scope, and publishes an invoke schema limited to the returned candidates; a valid zero-candidate result succeeds and removes any prior scoped invoke tool. The invoke schema requires `arguments` to be an object and omits `capabilityToken`; the bridge injects the trusted token. If a model nevertheless sends `arguments` as a string containing one JSON object, the bridge decodes it once as a compatibility fallback. Invalid JSON, arrays, scalars, unknown fields, and tool ids absent from the latest search fail before the MCP call.
 
 Images are supported when the current model accepts image input and the harness attachment feature is enabled; they then appear in the conversation like other images. Otherwise — and for audio or embedded resources — the model sees a clear diagnostic message instead of nothing.
 
@@ -128,6 +131,8 @@ The supervisor listens for `notifications/tools/list_changed` and queues a re-sy
 
 A tool call sends an uncached `tools/call` request carrying the raw MCP name, the JSON arguments, the abort signal, and the configured timeout; the public name is never sent to the server and never parsed back. Canonical success is `{ content: JsonValue[], structuredContent? }`, preserving the complete MCP JSON blocks for programmatic and PTC mode callers. A supported advertised `outputSchema` validates `structuredContent`; unsupported schema vocabulary falls back to unconstrained `JsonValue`. An MCP `isError` result throws before any image persistence, so the registry produces a failed tool result. Image batches are decoded and validated as a whole before any member is saved; any refusal projects every image as diagnostic text.
 
+The optional capability broker is a model-facing adapter around one configured raw search/invoke pair. It validates the search JSON before changing the Agent tool set, strips the token from both text and top-level structured content, and suppresses the server output schema because the sanitized result intentionally differs. Each successful search replaces only that Agent's scoped invoke definition; Agent disposal, MCP re-sync, reconnect exhaustion, or plugin disposal removes it. The invoke adapter accepts the latest candidate ids only, normalizes one stringified object when necessary, and injects the corresponding token immediately before `tools/call`.
+
 ### Environment scrubbing (stdio)
 
 The child environment starts from the subprocess seam's `scrubbedParentEnv()` — ambient names matching `/KEY|PASSWORD|SECRET|TOKEN/i` and ambient `DSH_*` names are dropped — and the configured `env` merges on top, so explicit overrides survive. The MCP SDK owns the actual spawn; this package shares the scrub definition, not the spawn path.
@@ -157,15 +162,15 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-After initial discovery succeeds, every advertised MCP tool appears as a native tool named `mcp__<serverName>__<rawName>` (or its deterministic normalized form) with the server-provided description and input schema. A successful re-sync — including the one after an automatic reconnect — replaces the generation; plugin disposal or an exhausted reconnect budget removes it.
+After initial discovery succeeds, every advertised MCP tool appears as a native tool named `mcp__<serverName>__<rawName>` (or its deterministic normalized form) with the server-provided description and input schema. A successful re-sync — including the one after an automatic reconnect — replaces the generation; plugin disposal or an exhausted reconnect budget removes it. When `capabilityBroker` is configured, the paired invoke tool is the exception: it stays hidden until that Agent completes a valid non-empty search, then appears with one schema branch per returned candidate and without a token field. A later non-empty search replaces the Agent's prior invoke schema and trusted token; a zero-candidate search removes them.
 
 #### Token effect
 
-The tool descriptions and input schemas enter every request while the tools are registered; re-syncs replace rather than accumulate schemas, and the server-qualified name adds tokens to every tool definition and call.
+The tool descriptions and input schemas enter every request while the tools are registered; re-syncs replace rather than accumulate schemas, and the server-qualified name adds tokens to every tool definition and call. Broker mode avoids placing the capability token in model input or assistant tool arguments. Its dynamic invoke definition contributes only the current candidates and their argument schemas after search.
 
 #### KV Cache effect
 
-The tool-definition prefix stays stable while the discovered set and schemas are unchanged. A re-sync that adds, removes, renames, or changes a tool replaces definitions and may invalidate reuse from the first changed schema token onward; a reconnect that recovers an unchanged list reproduces identical definitions and stays prefix-stable.
+The tool-definition prefix stays stable while the discovered set and schemas are unchanged. A re-sync that adds, removes, renames, or changes a tool replaces definitions and may invalidate reuse from the first changed schema token onward; a reconnect that recovers an unchanged list reproduces identical definitions and stays prefix-stable. In broker mode, each successful search can replace the scoped invoke schema, so reuse may change from that tool definition onward. Other Agent scopes keep their own definitions and tokens.
 
 ### Tool-call history and results
 

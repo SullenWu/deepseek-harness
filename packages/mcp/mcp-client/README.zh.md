@@ -64,6 +64,7 @@ kind: "package-reference"
 | `reconnect.initialDelayMs` | `500` | 首次重连延迟；每次连续失败尝试翻倍 |
 | `reconnect.maxDelayMs` | `30,000` | 退避上限；同时是重置尝试预算所需的正常运行时长 |
 | `reconnect.maxAttempts` | `10` | 每次中断内连续失败尝试次数上限，超出后放弃 |
+| `capabilityBroker.searchToolName` / `invokeToolName` | — | 可选的成对协议：由宿主持有搜索令牌，仅在成功搜索后暴露受候选项约束的调用工具 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-mcp-client)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -81,6 +82,8 @@ kind: "package-reference"
 ### 调用工具与读取结果
 
 模型调用 MCP 工具时，调用会以每次调用超时（默认 60 秒）发往远程服务器，并像其他工具调用一样可以取消。结果按块顺序以普通文本返回；资源链接以文本形式显示名称与 URI。如果服务器报告错误，调用会明确失败——模型不会看到虚假的成功。
+
+如果 MCP 服务器的搜索结果包含 `candidates` 和 `capabilityToken`，可用原始搜索与调用名称配置 `capabilityBroker`。模型最初只看到搜索工具，看不到调用工具。成功且非空的搜索会从模型可见内容中移除令牌，将其保存在该 Agent 作用域内，并发布仅限返回候选项的调用 schema；合法的零候选结果会正常成功，并移除之前的作用域调用工具。调用 schema 要求 `arguments` 为对象且不包含 `capabilityToken`；桥接层注入可信令牌。如果模型仍把 `arguments` 发送为包含单个 JSON 对象的字符串，桥接层会进行一次兼容解码。无效 JSON、数组、标量、未知字段以及不属于最新搜索结果的工具 id 会在 MCP 调用前失败。
 
 当前模型接受图片输入且 harness 启用了附件功能时支持图片；图片会像其他图片一样出现在对话中。不支持图片时——以及服务器返回音频或嵌入资源时——模型会看到清晰的诊断消息，而不是什么都没有。
 
@@ -128,6 +131,8 @@ kind: "package-reference"
 
 工具调用会发送一次未缓存的 `tools/call` 请求，携带原始 MCP 名称、JSON 参数、中止信号与配置的超时；公开名称绝不会发给服务器，也绝不会被解析还原。规范成功值是 `{ content: JsonValue[], structuredContent? }`，为程序化调用方与 PTC mode 调用方保留完整的 MCP JSON 块。受支持且已声明的 `outputSchema` 会验证 `structuredContent`；不受支持的 schema 词汇回退为不受约束的 `JsonValue`。MCP 的 `isError` 结果会在任何图片持久化之前抛出，使注册表产生失败的工具结果。图片批次会先整体解码并校验，再保存任一成员；任何拒绝都会把每张图片投影为诊断文本。
 
+可选的 capability broker 是围绕一对已配置原始搜索/调用工具的模型侧适配器。它在改变 Agent 工具集前校验搜索 JSON，从文本和顶层结构化内容中移除令牌，并禁用服务器输出 schema，因为清洗后的结果有意不同。每次成功搜索只替换该 Agent 的作用域调用定义；Agent dispose、MCP 重新同步、重连预算耗尽或插件 dispose 都会移除该定义。调用适配器只接受最新候选 id，在必要时规范化一个字符串化对象，并在 `tools/call` 前一刻注入对应令牌。
+
 ### 环境清洗（stdio）
 
 子进程环境以子进程 seam 的 `scrubbedParentEnv()` 为基座——删除匹配 `/KEY|PASSWORD|SECRET|TOKEN/i` 的环境名称与所有 `DSH_*` 名称——再在其上合并配置的 `env`，因此显式覆盖得以保留。实际 spawn 由 MCP SDK 负责；本包共享清洗定义，而非 spawn 路径。
@@ -157,15 +162,15 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-初始发现成功后，每个已声明的 MCP 工具都会显示为名为 `mcp__<serverName>__<rawName>`（或其确定性规范化形式）的原生工具，并携带服务器提供的描述与输入 schema。成功的重新同步——包括自动重连后的同步——会替换整个世代；对插件执行 dispose（资源释放）或重连预算耗尽会移除该世代。
+初始发现成功后，每个已声明的 MCP 工具都会显示为名为 `mcp__<serverName>__<rawName>`（或其确定性规范化形式）的原生工具，并携带服务器提供的描述与输入 schema。成功的重新同步——包括自动重连后的同步——会替换整个世代；对插件执行 dispose（资源释放）或重连预算耗尽会移除该世代。配置 `capabilityBroker` 后，成对的调用工具是例外：它会保持隐藏，直到该 Agent 完成一次有效且非空的搜索，然后以每个候选项一个 schema 分支且不含令牌字段的形式出现。后续非空搜索会替换该 Agent 之前的调用 schema 与可信令牌；零候选搜索会移除它们。
 
 #### Token 影响
 
-工具注册期间，工具描述与输入 schema 会进入每次请求；重新同步会替换而非累积 schema，服务器限定名称也会为每个工具定义和调用增加 token。
+工具注册期间，工具描述与输入 schema 会进入每次请求；重新同步会替换而非累积 schema，服务器限定名称也会为每个工具定义和调用增加 token。Broker 模式不会把 capability token 放入模型输入或 assistant 工具参数。其动态调用定义只在搜索后加入当前候选项及其参数 schema。
 
 #### KV Cache 影响
 
-已发现工具集合及其 schema 不变时，工具定义前缀保持稳定。增加、移除、重命名或更改工具的重新同步会替换定义，并可能使从第一个变化的 schema token 起的复用失效；恢复未变列表的重连会生成完全相同的定义，前缀保持稳定。
+已发现工具集合及其 schema 不变时，工具定义前缀保持稳定。增加、移除、重命名或更改工具的重新同步会替换定义，并可能使从第一个变化的 schema token 起的复用失效；恢复未变列表的重连会生成完全相同的定义，前缀保持稳定。在 broker 模式下，每次成功搜索都可能替换作用域调用 schema，因此从该工具定义起的复用可能变化。其他 Agent 作用域保留各自的定义与令牌。
 
 ### 工具调用历史与结果
 

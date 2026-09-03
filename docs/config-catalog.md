@@ -1448,6 +1448,8 @@ export interface StdioConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /** Optional search-then-invoke protocol whose capability token remains host-owned. */
+  capabilityBroker?: CapabilityBrokerConfig
 }
 
 /** Config for connecting to an MCP server over Streamable HTTP (SSE). */
@@ -1470,6 +1472,8 @@ export interface StreamableHttpConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /** Optional search-then-invoke protocol whose capability token remains host-owned. */
+  capabilityBroker?: CapabilityBrokerConfig
 }
 
 /** Automatic reconnect policy for one MCP server connection. */
@@ -1483,9 +1487,17 @@ export interface ReconnectConfig {
   /** Consecutive failed attempts per outage before giving up for good (default 10). */
   maxAttempts?: number
 }
+
+/** Names of one MCP search/invoke pair using the capability-broker JSON fields. */
+export interface CapabilityBrokerConfig {
+  /** Raw MCP tool name that returns `candidates` and `capabilityToken`. */
+  searchToolName: string
+  /** Raw MCP tool name that consumes `toolId`, `arguments`, `references`, and `capabilityToken`. */
+  invokeToolName: string
+}
 ```
 
-Source: [`packages/mcp/mcp-client/src/index.ts:98`](../packages/mcp/mcp-client/src/index.ts)
+Source: [`packages/mcp/mcp-client/src/index.ts:110`](../packages/mcp/mcp-client/src/index.ts)
 
 <a id="deepseek-aidsh-message-feedback"></a>
 

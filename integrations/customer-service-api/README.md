@@ -1,5 +1,7 @@
 # Customer-service API integration
 
+English | [中文](README.zh.md)
+
 This integration exposes one DeepSeek Harness turn through `POST /v1/customer-service/run`. The caller transports enterprise-chat messages, context, images, and MCP headers. Harness owns skill loading, retrieval, MCP selection and calls, evidence interpretation, follow-up questions, answers, and handoff decisions.
 
 The service uses the Python SDK to start the supported `dsh --profile sdk` runtime with [`customer-service.cordis.patch.yml`](customer-service.cordis.patch.yml). Each HTTP request owns one runtime process so its MCP headers cannot leak into another request. The service serializes runs because all processes share one Harness home and durable session store; reusing `conversationId` continues that Harness session.

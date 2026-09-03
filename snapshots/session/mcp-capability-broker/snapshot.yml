@@ -1,0 +1,11 @@
+version: 1
+scenario: mcp-capability-broker
+profile: headless
+composition: mcp-capability-broker
+recording: authored
+header:
+  class: mcp-capability-broker
+  pin: true
+  changes: 1
+replay:
+  override: true

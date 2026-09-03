@@ -51,6 +51,46 @@ server.registerTool('image', {
   ],
 }))
 
+server.registerTool('search_capabilities', {
+  title: 'Capability Search Tool',
+  description: 'Returns one candidate and a trusted invocation token.',
+  inputSchema: { query: z.string() },
+}, async args => ({
+  content: [{
+    type: 'text',
+    text: JSON.stringify({
+      candidates: [{
+        toolId: 'fixture.echo',
+        capability: 'Echo one value through the brokered invocation.',
+        argumentSchema: {
+          type: 'object',
+          properties: { value: { type: 'string' } },
+          required: ['value'],
+          additionalProperties: false,
+        },
+      }],
+      capabilityToken: `fixture-token:${args.query}`,
+    }),
+  }],
+}))
+
+server.registerTool('invoke_capability', {
+  title: 'Capability Invocation Tool',
+  description: 'Invokes one candidate with its trusted token.',
+  inputSchema: {
+    toolId: z.string(),
+    capabilityToken: z.string(),
+    arguments: z.object({ value: z.string() }),
+  },
+}, async args => ({
+  content: [{
+    type: 'text',
+    text: args.capabilityToken.startsWith('fixture-token:')
+      ? `${args.toolId}|${args.arguments.value}`
+      : 'invalid fixture capability token',
+  }],
+}))
+
 server.registerTool('crash', {
   title: 'Crash Tool',
   description: 'Replies, then exits the server process (crash-recovery test).',

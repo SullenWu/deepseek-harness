@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_capability_search", "name": "mcp__fixture__search_capabilities", "argumentsDelta": "{\"query\":\"tomorrow lessons\"}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_capability_search", "name": "mcp__fixture__search_capabilities", "arguments": "{\"query\":\"tomorrow lessons\"}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_capability_invoke", "name": "mcp__fixture__invoke_capability", "argumentsDelta": "{\"toolId\":\"fixture.echo\",\"arguments\":{\"value\":\"hello\"}}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_capability_invoke", "name": "mcp__fixture__invoke_capability", "arguments": "{\"toolId\":\"fixture.echo\",\"arguments\":{\"value\":\"hello\"}}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "BROKER_DONE" },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "BROKER_DONE" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 2 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]

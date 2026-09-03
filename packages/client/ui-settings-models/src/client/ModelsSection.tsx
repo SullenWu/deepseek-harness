@@ -9,7 +9,9 @@
  * dormant-provider select. Each card kind owns its own open state, so closing
  * one never discards a draft in another. Every mutation writes through the
  * wire, while a provider removal first requires confirmation; the page
- * re-renders from pushed invalidations or the post-apply reload.
+ * re-renders from pushed invalidations or the post-apply reload. Directory
+ * entries whose owning settings namespace failed to load remain unavailable
+ * and produce an actionable diagnostic instead of a no-op add action.
  */
 
 import { useState } from 'react'
@@ -290,7 +292,15 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   // step: whether the user already has a provider to talk to.
   const anyUsable = state.rows.some(providerUsable)
   const configured = state.rows.filter(row => row.configured)
-  const addable = state.rows.filter(row => !row.configured && row.entry.settingsNs !== '')
+  const unavailableSettingsNamespaces = [...new Set(
+    state.rows
+      .filter(row => row.entry.settingsNs !== '' && !state.namespaces.has(row.entry.settingsNs))
+      .map(row => row.entry.settingsNs),
+  )]
+  const addable = state.rows.filter(row =>
+    !row.configured
+    && row.entry.settingsNs !== ''
+    && state.namespaces.has(row.entry.settingsNs))
   const addTarget = adding ? editing : undefined
   const addNamespace = addTarget === undefined ? undefined : state.namespaces.get(addTarget.settingsNs)
   // The draft's directory row, for the card extension seat. A refresh can drop
@@ -309,6 +319,16 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
       <h2 className={styles['title']}>{t('title')}</h2>
       <p className={styles['intro']}>{t('intro')}</p>
       {!state.writable && state.status === 'ready' ? <p className={styles['notice']}>{t('readOnly')}</p> : null}
+      {unavailableSettingsNamespaces.length === 0
+        ? null
+        : (
+          <p className={styles['error']} role="alert">
+            {t('settingsUnavailable').replace(
+              '{namespaces}',
+              () => unavailableSettingsNamespaces.join(', '),
+            )}
+          </p>
+        )}
       {savedIdentity === undefined
         ? null
         : (

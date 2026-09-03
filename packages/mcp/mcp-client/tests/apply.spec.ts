@@ -152,6 +152,29 @@ describe('mcp-client plugin module exports', () => {
       reconnect: { maxAttempts: 0 },
     } as never)).toThrow()
   })
+
+  it('Config schema accepts a complete capability broker and rejects partial names', () => {
+    const resolved = ConfigSchema({
+      transport: 'stdio',
+      serverName: 'srv',
+      command: 'echo',
+      capabilityBroker: {
+        searchToolName: 'search_capabilities',
+        invokeToolName: 'invoke_capability',
+      },
+    } as never)
+    expect(resolved.capabilityBroker).toEqual({
+      searchToolName: 'search_capabilities',
+      invokeToolName: 'invoke_capability',
+    })
+
+    expect(() => ConfigSchema({
+      transport: 'stdio',
+      serverName: 'srv',
+      command: 'echo',
+      capabilityBroker: { searchToolName: 'search_capabilities' },
+    } as never)).toThrow()
+  })
 })
 
 describe('apply (plugin lifecycle)', () => {
@@ -180,6 +203,26 @@ describe('apply (plugin lifecycle)', () => {
     expect(mockSetNotificationHandler).toHaveBeenCalled()
     expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
     expect(ctx.tools.get('remote')).toBeUndefined()
+  })
+
+  it('passes an enabled capability broker into initial tool synchronization', async () => {
+    mockListTools.mockResolvedValue({
+      tools: [
+        { name: 'search_capabilities', inputSchema: { type: 'object' } },
+        { name: 'invoke_capability', inputSchema: { type: 'object' } },
+      ],
+      nextCursor: undefined,
+    })
+    await apply(ctx, {
+      ...stdioConfig,
+      capabilityBroker: {
+        searchToolName: 'search_capabilities',
+        invokeToolName: 'invoke_capability',
+      },
+    })
+
+    expect(ctx.tools.get('mcp__srv__search_capabilities')).toBeDefined()
+    expect(ctx.tools.get('mcp__srv__invoke_capability')).toBeUndefined()
   })
 
   it('keeps the Cordis plugin loading until initial discovery publishes its tools', async () => {

@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
@@ -27,6 +28,9 @@ import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepse
 import { apply } from '@deepseek-ai/dsh-mcp-client/src/index.ts'
 import { publicToolName } from '@deepseek-ai/dsh-mcp-client/src/tools.ts'
 import type { Config } from '@deepseek-ai/dsh-mcp-client'
+import { createScope } from '@deepseek-ai/dsh-scope'
+import type { Scope } from '@deepseek-ai/dsh-scope'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 
 const testToolSignal = new AbortController().signal
 
@@ -43,6 +47,15 @@ async function mountRegistry(): Promise<Context> {
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   return ctx
+}
+
+/** Mint the Agent scope used by brokered tools in the real-protocol fixture. */
+async function mintAgentScope(ctx: Context, id: string): Promise<{ agent: Agent; scope: Scope }> {
+  const agent = { id: id as SessionId } as Agent
+  let scope!: Scope
+  await ctx.plugin(Object.assign((inner: Context) => { scope = createScope(inner, agent) }, { inject: ['tools'] }))
+  Object.assign(agent, { ctx: scope.ctx })
+  return { agent, scope }
 }
 
 /** Exact-route adapter used to prove real MCP image admission without an API key. */
@@ -106,6 +119,10 @@ describe('fixture server — controlled scenarios', () => {
     cwd: packageDir,
     toolCallTimeoutMs: 15_000,
     failOnStartupError: false,
+    capabilityBroker: {
+      searchToolName: 'search_capabilities',
+      invokeToolName: 'invoke_capability',
+    },
   }
 
   beforeAll(async () => {
@@ -127,6 +144,8 @@ describe('fixture server — controlled scenarios', () => {
     expect(names).toContain('mcp__fixture__greet')
     expect(names).toContain('mcp__fixture__fail')
     expect(names).toContain('mcp__fixture__image')
+    expect(names).toContain('mcp__fixture__search_capabilities')
+    expect(names).not.toContain('mcp__fixture__invoke_capability')
     // Raw names are not registered.
     expect(names).not.toContain('add')
   })
@@ -153,6 +172,43 @@ describe('fixture server — controlled scenarios', () => {
     })
     expect(result.isError).toBe(false)
     expect(result.content[0]).toEqual({ type: 'text', text: '5' })
+  })
+
+  it('brokers a real search/invoke exchange without exposing the token', async () => {
+    const { agent, scope } = await mintAgentScope(ctx, 'fixture-broker-agent')
+    const search = await ctx.tools.execute({
+      signal: testToolSignal,
+      agent,
+      callId: nextCallId(),
+      name: 'mcp__fixture__search_capabilities',
+      arguments: { query: 'agent-a' },
+    })
+    expect(search.isError).toBe(false)
+    expect(JSON.stringify(search.content)).not.toContain('fixture-token')
+
+    const invoke = ctx.tools.get('mcp__fixture__invoke_capability', agent)
+    expect(invoke?.parameters).toMatchObject({
+      properties: {
+        toolId: { const: 'fixture.echo' },
+        arguments: { type: 'object' },
+      },
+      required: ['toolId', 'arguments'],
+      additionalProperties: false,
+    })
+    const invoked = await ctx.tools.execute({
+      signal: testToolSignal,
+      agent,
+      callId: nextCallId(),
+      name: 'mcp__fixture__invoke_capability',
+      arguments: { toolId: 'fixture.echo', arguments: '{"value":"hello"}' },
+    })
+    expect(invoked.isError).toBe(false)
+    expect(invoked.content[0]).toEqual({
+      type: 'text',
+      text: 'fixture.echo|hello',
+    })
+    await scope.dispose()
+    expect(ctx.tools.get('mcp__fixture__invoke_capability', agent)).toBeUndefined()
   })
 
   it('executes greet("World") → "Hello, World!"', async () => {

@@ -336,6 +336,37 @@ describe('ModelsSection', () => {
     expect(cardSeatCalls(renderSlot)).toContainEqual(['anthropic', false, false, 'llm-pi-ai'])
   })
 
+  it('disables unavailable directory entries and names their missing settings namespace', async () => {
+    const scripted = scriptedFace()
+    scripted.face.llm.listConfigurableProviders.mockResolvedValue(remoteOk([
+      {
+        provider: 'deepseek-official',
+        displayName: 'DeepSeek',
+        settingsNs: 'llm-deepseek',
+        settingsPath: [],
+      },
+      {
+        provider: 'anthropic',
+        displayName: 'anthropic',
+        settingsNs: 'llm-pi-ai',
+        settingsPath: ['providers', 'anthropic'],
+      },
+    ]))
+    scripted.face.settings.describe.mockResolvedValue(remoteOk({
+      writable: true,
+      hasDocument: true,
+      namespaces: wireNamespaces().filter(namespace => namespace.ns !== 'llm-pi-ai'),
+    }))
+    await mountFace(scripted)
+
+    expect(screen.getByRole('alert').textContent).toBe(
+      en.settingsUnavailable.replace('{namespaces}', 'llm-pi-ai'),
+    )
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: en.add }).disabled).toBe(true)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: en.customAdd }).disabled).toBe(true)
+    expect(screen.queryByLabelText(en.provider)).toBeNull()
+  })
+
   it('derives the draft seat\'s key fact from the page\'s conventional reference', async () => {
     const scripted = scriptedFace()
     scripted.face.credentials.describe.mockImplementation((refs: string[]) => Promise.resolve(remoteOk(

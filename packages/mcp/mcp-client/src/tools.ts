@@ -25,9 +25,12 @@ import type { ToolDefinition, ToolExecution, ToolExecutionResult } from '@deepse
 import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
 import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { CapabilityBrokerConfig } from './index.ts'
 
 /** Resolved options relevant to tool bridging. */
 export interface ToolBridgeOptions {
+  /** Optional paired search/invoke protocol with host-owned capability tokens. */
+  capabilityBroker?: CapabilityBrokerConfig
   /** Whether a registry conflict is contained or rejects this synchronization. */
   registrationFailure: 'contain' | 'throw'
   serverName: string
@@ -148,31 +151,45 @@ export async function syncTools(
   previous: ToolDisposers,
 ): Promise<ToolDisposers> {
   // Phase 1: fetch and build the next generation without touching the registry.
-  const definitions = new Map<string, ToolDefinition>()
+  const listedTools: ListedTool[] = []
+  const publicNames = new Set<string>()
   let cursor: string | undefined
   do {
     const response = await listToolsUncached(client, cursor)
     for (const tool of response.tools) {
       const publicName = publicToolName(opts.serverName, tool.name)
-      if (definitions.has(publicName)) {
+      if (publicNames.has(publicName)) {
         throw new Error(
           `mcp-client(${opts.serverName}): server listed tool "${tool.name}" more than once — invalid tool list`,
         )
       }
-      definitions.set(publicName, createDefinition(
-        client,
-        ctx,
-        publicName,
-        tool.name,
-        tool.description ?? '',
-        tool.inputSchema,
-        supportedOutputSchema(tool.outputSchema),
-        tool.execution?.taskSupport === 'required',
-        opts,
-      ))
+      publicNames.add(publicName)
+      listedTools.push(tool as ListedTool)
     }
     cursor = response.nextCursor
   } while (cursor)
+
+  const broker = opts.capabilityBroker === undefined
+    ? undefined
+    : createCapabilityBroker(client, ctx, opts, listedTools, opts.capabilityBroker)
+  const definitions = new Map<string, ToolDefinition>()
+  for (const tool of listedTools) {
+    if (broker?.skipsInitialRegistration(tool.name)) continue
+    const publicName = publicToolName(opts.serverName, tool.name)
+    const adapter = broker?.adapterFor(tool.name)
+    definitions.set(publicName, createDefinition(
+      client,
+      ctx,
+      publicName,
+      tool.name,
+      tool.description ?? '',
+      tool.inputSchema,
+      adapter?.suppressOutputSchema === true ? undefined : supportedOutputSchema(tool.outputSchema),
+      tool.execution?.taskSupport === 'required',
+      opts,
+      adapter,
+    ))
+  }
 
   // Phase 2: swap generations.
   for (const dispose of previous.values()) dispose()
@@ -181,11 +198,13 @@ export async function syncTools(
     for (const [publicName, definition] of definitions) {
       disposers.set(publicName, ctx.tools.register(definition))
     }
+    if (broker !== undefined) disposers.set('\0capability-broker', () => { broker.dispose() })
   } catch (error) {
     // A conflict on an `mcp__<serverName>__`-qualified name means a foreign
     // registration occupies this server's namespace. Roll back so the model
     // sees either the full generation or none of it — never a partial set.
     for (const dispose of disposers.values()) dispose()
+    broker?.dispose()
     ctx.logger.error(`mcp-client(${opts.serverName}): tool registration failed, no tools registered: ${String(error)}`)
     if (opts.registrationFailure === 'throw') throw error
     return new Map()
@@ -218,6 +237,37 @@ interface PreparedProjection {
   content: ContentBlock[]
 }
 
+/** One MCP tool-list entry retained until the complete generation is available. */
+interface ListedTool {
+  name: string
+  description?: string
+  inputSchema: Record<string, unknown>
+  outputSchema?: Record<string, unknown>
+  execution?: { taskSupport?: 'optional' | 'required' | 'forbidden' }
+}
+
+/** Candidate fields required by the optional search/invoke broker protocol. */
+interface CapabilityCandidate {
+  capability?: string
+  toolId: string
+  argumentSchema: Record<string, unknown>
+}
+
+/** Execution hooks owned by a model-facing wrapper around one raw MCP tool. */
+interface ToolExecutionAdapter {
+  prepareArguments?(args: unknown, exec: ToolExecution): Record<string, unknown>
+  /** Whether transformed results intentionally omit fields from the server output schema. */
+  suppressOutputSchema?: true
+  transformResult?(value: McpResult, exec: ToolExecution): McpResult
+}
+
+/** One generation of the optional host-owned search/invoke protocol. */
+interface CapabilityBrokerGeneration {
+  adapterFor(rawName: string): ToolExecutionAdapter | undefined
+  skipsInitialRegistration(rawName: string): boolean
+  dispose(): void
+}
+
 /** Keep a supported advertised schema; unsupported MCP vocabulary falls back to JsonValue. */
 function supportedOutputSchema(candidate: unknown): JsonSchemaNode | undefined {
   if (candidate === undefined) return undefined
@@ -226,6 +276,243 @@ function supportedOutputSchema(candidate: unknown): JsonSchemaNode | undefined {
     return candidate
   } catch {
     return undefined
+  }
+}
+
+/** Whether an unknown value is a non-array object suitable for MCP arguments. */
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Remove a nullable type arm while preserving the server's object annotations and properties. */
+function objectOnlySchema(candidate: unknown): Record<string, unknown> {
+  if (!isUnknownRecord(candidate)) {
+    return { type: 'object', properties: {}, additionalProperties: false }
+  }
+  const normalized: Record<string, unknown> = { ...candidate, type: 'object' }
+  if (normalized.default === null) delete normalized.default
+  return normalized
+}
+
+/** Build a candidate-bound invoke schema without exposing the trusted token field. */
+function brokeredInvokeSchema(
+  invokeSchema: Record<string, unknown>,
+  candidates: readonly CapabilityCandidate[],
+): Record<string, unknown> {
+  const rawProperties = isUnknownRecord(invokeSchema.properties) ? invokeSchema.properties : {}
+  const rawToolId = isUnknownRecord(rawProperties.toolId) ? rawProperties.toolId : {}
+  const references = {
+    ...objectOnlySchema(rawProperties.references),
+    description: 'Opaque references returned by earlier capability results.',
+  }
+  const variants = candidates.map((candidate): Record<string, unknown> => ({
+    type: 'object',
+    properties: {
+      toolId: {
+        ...rawToolId,
+        type: 'string',
+        const: candidate.toolId,
+        ...candidate.capability === undefined ? {} : { description: candidate.capability },
+      },
+      arguments: objectOnlySchema(candidate.argumentSchema),
+      references,
+    },
+    required: ['toolId', 'arguments'],
+    additionalProperties: false,
+  }))
+  const only = variants[0]
+  if (variants.length === 1 && only !== undefined) return only
+  return { oneOf: variants }
+}
+
+/** Parse and validate the broker fields returned inside one text content block. */
+function parseCapabilitySearch(value: McpResult, rawName: string): {
+  candidates: CapabilityCandidate[]
+  sanitized: McpResult
+  token?: string
+} {
+  const index = value.content.findIndex(block => isRecord(block) && block.type === 'text' && typeof block.text === 'string')
+  const block = value.content[index]
+  if (!isUnknownRecord(block) || typeof block.text !== 'string') {
+    throw new Error(`CAPABILITY_BROKER_RESULT_INVALID: ${rawName} returned no JSON text block`)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(block.text)
+  } catch {
+    throw new Error(`CAPABILITY_BROKER_RESULT_INVALID: ${rawName} returned invalid JSON`)
+  }
+  if (!isUnknownRecord(parsed) || !Array.isArray(parsed.candidates)) {
+    throw new Error(`CAPABILITY_BROKER_RESULT_INVALID: ${rawName} omitted candidates`)
+  }
+  const candidates: CapabilityCandidate[] = []
+  const toolIds = new Set<string>()
+  for (const candidate of parsed.candidates) {
+    if (!isUnknownRecord(candidate) || typeof candidate.toolId !== 'string' || candidate.toolId.length === 0
+      || !isUnknownRecord(candidate.argumentSchema)) {
+      throw new Error(`CAPABILITY_BROKER_RESULT_INVALID: ${rawName} returned a malformed candidate`)
+    }
+    if (toolIds.has(candidate.toolId)) {
+      throw new Error(`CAPABILITY_BROKER_RESULT_INVALID: ${rawName} returned duplicate toolId ${JSON.stringify(candidate.toolId)}`)
+    }
+    toolIds.add(candidate.toolId)
+    candidates.push({
+      toolId: candidate.toolId,
+      argumentSchema: candidate.argumentSchema,
+      ...typeof candidate.capability === 'string' ? { capability: candidate.capability } : {},
+    })
+  }
+  const token = parsed.capabilityToken
+  if (candidates.length > 0 && (typeof token !== 'string' || token.length === 0)) {
+    throw new Error(`CAPABILITY_BROKER_RESULT_INVALID: ${rawName} omitted capabilityToken for non-empty candidates`)
+  }
+  if (token !== undefined && typeof token !== 'string') {
+    throw new Error(`CAPABILITY_BROKER_RESULT_INVALID: ${rawName} returned a malformed capabilityToken`)
+  }
+  const { capabilityToken: _token, ...safePayload } = parsed
+  const content = [...value.content]
+  content[index] = { ...block, text: JSON.stringify(safePayload) }
+  const structuredContent = isUnknownRecord(value.structuredContent)
+    ? Object.fromEntries(Object.entries(value.structuredContent).filter(([key]) => key !== 'capabilityToken')) as JsonValue
+    : value.structuredContent
+  return {
+    candidates,
+    ...typeof token === 'string' && token.length > 0 ? { token } : {},
+    sanitized: {
+      content,
+      ...structuredContent === undefined ? {} : { structuredContent },
+    },
+  }
+}
+
+/** Convert the model's compatibility string into one object without recursive decoding. */
+function normalizeBrokerArguments(
+  value: unknown,
+  ctx: Context,
+  opts: ToolBridgeOptions,
+  toolId: string,
+): Record<string, unknown> {
+  if (isUnknownRecord(value)) return value
+  if (typeof value !== 'string') {
+    throw new Error('INVALID_TOOL_ARGUMENTS: arguments must be a JSON object')
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error('INVALID_TOOL_ARGUMENTS: arguments string must contain valid JSON')
+  }
+  if (!isUnknownRecord(parsed)) {
+    throw new Error('INVALID_TOOL_ARGUMENTS: arguments string must contain one JSON object')
+  }
+  ctx.logger.warn(`mcp-client(${opts.serverName}): normalized stringified arguments for ${toolId}`)
+  return parsed
+}
+
+/** Prepare one brokered invocation and inject only the token captured from its search. */
+function prepareBrokerInvocation(
+  args: unknown,
+  token: string,
+  candidates: ReadonlyMap<string, CapabilityCandidate>,
+  ctx: Context,
+  opts: ToolBridgeOptions,
+): Record<string, unknown> {
+  if (!isUnknownRecord(args)) throw new Error('INVALID_TOOL_ARGUMENTS: invoke arguments must be a JSON object')
+  const extra = Object.keys(args).filter(key => !['toolId', 'arguments', 'references'].includes(key))
+  if (extra.length > 0) {
+    throw new Error(`INVALID_TOOL_ARGUMENTS: unsupported invoke fields ${extra.map(key => JSON.stringify(key)).join(', ')}`)
+  }
+  const toolId = args.toolId
+  if (typeof toolId !== 'string' || !candidates.has(toolId)) {
+    throw new Error('INVALID_TOOL_ARGUMENTS: toolId must name one candidate from the latest search')
+  }
+  const ordinaryArguments = normalizeBrokerArguments(args.arguments, ctx, opts, toolId)
+  const references = args.references
+  if (references !== undefined && references !== null && !isUnknownRecord(references)) {
+    throw new Error('INVALID_TOOL_ARGUMENTS: references must be a JSON object when provided')
+  }
+  return {
+    toolId,
+    capabilityToken: token,
+    arguments: ordinaryArguments,
+    ...isUnknownRecord(references) ? { references } : {},
+  }
+}
+
+/** Create one generation-local search/invoke broker after complete tool discovery. */
+function createCapabilityBroker(
+  client: Client,
+  ctx: Context,
+  opts: ToolBridgeOptions,
+  tools: readonly ListedTool[],
+  config: CapabilityBrokerConfig,
+): CapabilityBrokerGeneration {
+  if (config.searchToolName === config.invokeToolName) {
+    throw new Error(`mcp-client(${opts.serverName}): capabilityBroker tool names must be distinct`)
+  }
+  const search = tools.find(tool => tool.name === config.searchToolName)
+  const invoke = tools.find(tool => tool.name === config.invokeToolName)
+  if (search === undefined || invoke === undefined) {
+    throw new Error(
+      `mcp-client(${opts.serverName}): capabilityBroker requires tools ${JSON.stringify(config.searchToolName)} and ${JSON.stringify(config.invokeToolName)}`,
+    )
+  }
+  const scopedDisposers = new Map<object, () => void>()
+  let disposed = false
+
+  const replaceInvoke = (token: string | undefined, candidates: CapabilityCandidate[], exec: ToolExecution): void => {
+    const agent = exec.agent
+    if (agent === undefined) throw new Error('CAPABILITY_BROKER_AGENT_REQUIRED: search must run for an Agent')
+    scopedDisposers.get(agent)?.()
+    if (disposed) throw new Error('CAPABILITY_BROKER_UNAVAILABLE: MCP generation was disposed')
+    if (candidates.length === 0) return
+    const trustedToken = token as string
+    const byToolId = new Map(candidates.map(candidate => [candidate.toolId, candidate]))
+    const definition = createDefinition(
+      client,
+      ctx,
+      publicToolName(opts.serverName, invoke.name),
+      invoke.name,
+      invoke.description ?? '',
+      brokeredInvokeSchema(invoke.inputSchema, candidates),
+      supportedOutputSchema(invoke.outputSchema),
+      invoke.execution?.taskSupport === 'required',
+      opts,
+      {
+        prepareArguments: args => prepareBrokerInvocation(args, trustedToken, byToolId, ctx, opts),
+      },
+    )
+    const unregister = agent.ctx.tools.register(definition)
+    const forgetScopeEffect = agent.ctx.effect(() => () => {
+      scopedDisposers.delete(agent)
+    }, 'mcp-client capability broker scope cleanup')
+    const dispose = (): void => {
+      void forgetScopeEffect()
+      unregister()
+      scopedDisposers.delete(agent)
+    }
+    scopedDisposers.set(agent, dispose)
+  }
+
+  return {
+    skipsInitialRegistration: rawName => rawName === invoke.name,
+    adapterFor(rawName) {
+      if (rawName !== search.name) return undefined
+      return {
+        suppressOutputSchema: true,
+        transformResult(value, exec) {
+          const parsed = parseCapabilitySearch(value, search.name)
+          replaceInvoke(parsed.token, parsed.candidates, exec)
+          return parsed.sanitized
+        },
+      }
+    },
+    dispose() {
+      if (disposed) return
+      disposed = true
+      for (const dispose of [...scopedDisposers.values()]) dispose()
+      scopedDisposers.clear()
+    },
   }
 }
 
@@ -240,6 +527,7 @@ function supportedOutputSchema(candidate: unknown): JsonSchemaNode | undefined {
  * @param structuredSchema - supported structured-output schema, when advertised.
  * @param taskRequired - whether this MCP tool requires unsupported task execution.
  * @param opts - bridge timeout and namespace options.
+ * @param adapter - optional model/wire argument and result adapter.
  * @returns a complete ToolRuntime definition.
  */
 function createDefinition(
@@ -252,6 +540,7 @@ function createDefinition(
   structuredSchema: JsonSchemaNode | undefined,
   taskRequired: boolean,
   opts: ToolBridgeOptions,
+  adapter?: ToolExecutionAdapter,
 ): ToolDefinition {
   const projections = new WeakMap<ToolExecution, PreparedProjection>()
   return {
@@ -259,7 +548,7 @@ function createDefinition(
     description,
     parameters,
     output: createOutput(rawName, structuredSchema),
-    execute: createExecutor(client, ctx, rawName, taskRequired, opts, projections),
+    execute: createExecutor(client, ctx, rawName, taskRequired, opts, projections, adapter),
     finalizeContent(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) {
       const projection = projections.get(exec)
       if (projection === undefined) return undefined
@@ -308,6 +597,7 @@ function createExecutor(
   taskRequired: boolean,
   opts: ToolBridgeOptions,
   projections: WeakMap<ToolExecution, PreparedProjection>,
+  adapter?: ToolExecutionAdapter,
 ): ToolDefinition['execute'] {
   return async (args: unknown, exec: ToolExecution) => {
     if (taskRequired) {
@@ -317,44 +607,47 @@ function createExecutor(
     // object, but can be any JSON value if the model misbehaves (outputs a bare
     // string/number/null). Fallback to {} lets the MCP server produce a
     // specific "missing required param" error the model can learn from.
-    const argsObj = (typeof args === 'object' && args !== null ? args : {}) as Record<string, unknown>
+    const argsObj = adapter?.prepareArguments?.(args, exec)
+      ?? (typeof args === 'object' && args !== null ? args : {}) as Record<string, unknown>
     const result = await callToolUncached(client, rawName, argsObj, exec, opts)
 
     // The SDK may return a legacy `toolResult` shape; normalize to content array.
+    let value: McpResult
     if (!Array.isArray(result.content)) {
       const rendered: unknown = 'toolResult' in result
         ? JSON.stringify(result.toolResult)
         : '(no output)'
       const text = typeof rendered === 'string' ? rendered : '(no output)'
       if (result.isError === true) throw new Error(text)
-      return {
+      value = {
         content: [{ type: 'text', text }],
         ...result.structuredContent !== undefined
           ? { structuredContent: result.structuredContent as JsonValue }
           : {},
       }
-    }
+    } else {
+      // Trust boundary: the SDK's return type erases to `any[]` due to the
+      // union of CallToolResult | CompatibilityCallToolResult; extractText
+      // validates each element.
+      const content = result.content as unknown as JsonValue[]
+      const text = extractText(content, rawName)
 
-    // Trust boundary: the SDK's return type erases to `any[]` due to the
-    // union of CallToolResult | CompatibilityCallToolResult; extractText
-    // validates each element.
-    const content = result.content as unknown as JsonValue[]
-    const text = extractText(content, rawName)
+      // MCP isError → throw so ToolRuntime produces an isError result for the model.
+      if (result.isError === true) {
+        throw new Error(text)
+      }
 
-    // MCP isError → throw so ToolRuntime produces an isError result for the model.
-    if (result.isError === true) {
-      throw new Error(text)
+      value = {
+        content,
+        ...result.structuredContent !== undefined
+          ? { structuredContent: result.structuredContent as JsonValue }
+          : {},
+      }
     }
-
-    const value: McpResult = {
-      content,
-      ...result.structuredContent !== undefined
-        ? { structuredContent: result.structuredContent as JsonValue }
-        : {},
-    }
-    if (containsImage(content)) {
-      const fallback: ContentBlock[] = [{ type: 'text', text: extractText(content, rawName) }]
-      const projected = await prepareImageProjection(ctx, exec, content, rawName)
+    value = adapter?.transformResult?.(value, exec) ?? value
+    if (containsImage(value.content)) {
+      const fallback: ContentBlock[] = [{ type: 'text', text: extractText(value.content, rawName) }]
+      const projected = await prepareImageProjection(ctx, exec, value.content, rawName)
       projections.set(exec, { value, fallback, content: projected })
     }
     return value

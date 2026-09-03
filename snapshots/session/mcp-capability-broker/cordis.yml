@@ -1,0 +1,17 @@
+# Add the real MCP client and local protocol fixture to the shipped headless profile.
+- insert:
+    - id: mcp-capability-broker
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        transport: stdio
+        serverName: fixture
+        command: !!js process.execPath
+        args:
+          - --import
+          - !!js "decodeURIComponent(new URL('../../../node_modules/tsx/dist/esm/index.mjs', 'file://' + process.env.DSH_SNAPSHOT_FILE).pathname)"
+          - !!js "decodeURIComponent(new URL('../../../packages/mcp/mcp-client/tests/fixture-server.ts', 'file://' + process.env.DSH_SNAPSHOT_FILE).pathname)"
+        toolCallTimeoutMs: 15000
+        failOnStartupError: true
+        capabilityBroker:
+          searchToolName: search_capabilities
+          invokeToolName: invoke_capability

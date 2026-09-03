@@ -32,6 +32,8 @@ Status: implemented
 
 可配置提供方目录现在是已安装 catalog **与**当前 profile 声明的每条路由的并集，并在该集合变化时重新登记。没有这个并集，手工声明的路由就没有 settings 地址，任何配置界面都无法展示或编辑它。
 
+当适配器的 settings section 安装失败时，目录仍可能保持可用，因为 catalog 注册先于可选的 settings 注入。配置界面因此只在目录项声明的 settings namespace 存在时才把它视为可编辑项。namespace 缺失时，界面会给出可操作的诊断，且绝不会启用一个无法打开编辑器的新增操作。
+
 ### 唯一档位什么也做不到的能力，报告为不可用
 
 pi-ai 把没有推理元数据的模型报告为只支持 `off` 一档，而适配器此前原样透传。它抵达 seam 时是一个单元素的 effort 列表，任何界面都会把它渲染成一个只有一项可选控件的选择器——而这个控件在撒谎：`off` 在派发时变成被*省略*的推理选项，与「不点名任何档位」产出的请求逐字节相同。自身默认就在思考的提供方会继续思考，界面却显示 `off` 已选中。
@@ -65,4 +67,4 @@ pi-ai 的 `Models` 自带一套凭据概念——按提供方 ID 索引的 `Cred
 
 ## Testing
 
-`tests/catalog.spec.ts` 针对本地 mock 服务器端到端覆盖该约定：手工声明的路由带着自己的凭据流向自己的端点、它在可配置提供方目录中的出现、每模型覆盖从已安装 catalog 继承默认值、向 catalog 路由添加模型、带与不带端点覆盖的协议改指、catalog 独有元数据在覆盖后存活、无密钥姿态及其 `Authorization` 标头变通、只走 OAuth 的 catalog 路由用 profile 点名的密钥完成认证而无密钥者保持未配置、改指协议的路由保留其 catalog auth，以及每一种点名路由或模型的解析失败。`tests/catalog.spec.ts` 还钉住了快照与目录两项约定：在途请求即便其路由集在 credential await 期间改变，仍抵达它解析时对应的端点；下一个请求取用新配置；冲突的声明路由让目录保持完好；声明路由的条目随其 profile 出现与离开。`packages/llm/llm/tests/topology.spec.ts` 覆盖 `replace`——拒绝他人已拥有的候选同时保住当前集合、接受对自身条目的替换、允许空集合，以及 dispose 之后失败。`tests/sdk-options.spec.ts` 把 SDK 边界从已移除的 `/compat` 导入改指到协议表的 lazy api 模块，同时钉住「setup 失败以终止性错误分片而非抛出的形式抵达」。twin 的[设计验证角色](2026-06-13-twin-llm-adapters.zh.md)不变。
+`tests/catalog.spec.ts` 针对本地 mock 服务器端到端覆盖该约定：手工声明的路由带着自己的凭据流向自己的端点、它在可配置提供方目录中的出现、每模型覆盖从已安装 catalog 继承默认值、向 catalog 路由添加模型、带与不带端点覆盖的协议改指、catalog 独有元数据在覆盖后存活、无密钥姿态及其 `Authorization` 标头变通、只走 OAuth 的 catalog 路由用 profile 点名的密钥完成认证而无密钥者保持未配置、改指协议的路由保留其 catalog auth，以及每一种点名路由或模型的解析失败。`tests/catalog.spec.ts` 还钉住了快照与目录两项约定：在途请求即便其路由集在 credential await 期间改变，仍抵达它解析时对应的端点；下一个请求取用新配置；冲突的声明路由让目录保持完好；声明路由的条目随其 profile 出现与离开。`packages/llm/llm/tests/topology.spec.ts` 覆盖 `replace`——拒绝他人已拥有的候选同时保住当前集合、接受对自身条目的替换、允许空集合，以及 dispose 之后失败。`packages/client/ui-settings-models/tests/components.client.spec.tsx` 证明所属 settings namespace 缺失时，对应新增入口会禁用并指名该 namespace。`tests/sdk-options.spec.ts` 把 SDK 边界从已移除的 `/compat` 导入改指到协议表的 lazy api 模块，同时钉住「setup 失败以终止性错误分片而非抛出的形式抵达」。twin 的[设计验证角色](2026-06-13-twin-llm-adapters.zh.md)不变。

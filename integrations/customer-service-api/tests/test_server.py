@@ -12,11 +12,24 @@ import pytest
 
 
 SERVER_PATH = Path(__file__).resolve().parents[1] / "server.py"
+PATCH_PATH = Path(__file__).resolve().parents[1] / "customer-service.cordis.patch.yml"
 SPEC = importlib.util.spec_from_file_location("customer_service_api_server", SERVER_PATH)
 assert SPEC is not None and SPEC.loader is not None
 SERVER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = SERVER
 SPEC.loader.exec_module(SERVER)
+
+
+def test_customer_service_profile_mounts_time_and_host_owned_capability_broker() -> None:
+    """Keep relative dates and trusted MCP invocation state in the shipped profile."""
+    patch = PATCH_PATH.read_text(encoding="utf-8")
+
+    assert "name: '@deepseek-ai/dsh-time-context'" in patch
+    assert "timeZone: Asia/Shanghai" in patch
+    assert "refreshIntervalMs: 60000" in patch
+    assert "capabilityBroker:" in patch
+    assert "searchToolName: search_capabilities" in patch
+    assert "invokeToolName: invoke_capability" in patch
 
 
 def valid_model_config() -> dict[str, object]:

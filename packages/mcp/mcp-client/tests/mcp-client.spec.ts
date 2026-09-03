@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import AttachmentStore, { AttachmentError, AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentLimits, ImageAttachmentRef, SaveImageAttachment, StoredImageAttachment } from '@deepseek-ai/dsh-attachment'
 import { ToolCallId, LlmAdapter, LlmRuntime } from '@deepseek-ai/dsh-llm'
@@ -11,6 +12,9 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { PostToolDecision } from '@deepseek-ai/dsh-tools'
+import { createScope } from '@deepseek-ai/dsh-scope'
+import type { Scope } from '@deepseek-ai/dsh-scope'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import { publicToolName, syncTools, type ToolBridgeOptions } from '@deepseek-ai/dsh-mcp-client/src/tools.ts'
 import { createTransport } from '@deepseek-ai/dsh-mcp-client/src/transport.ts'
 import type { Config } from '@deepseek-ai/dsh-mcp-client'
@@ -67,6 +71,15 @@ async function mountRegistry(): Promise<Context> {
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   return ctx
+}
+
+/** Mint the Agent scope needed to prove brokered invocation ownership. */
+async function mintAgentScope(ctx: Context, id: string): Promise<{ agent: Agent; scope: Scope }> {
+  const agent = { id: id as SessionId } as Agent
+  let scope!: Scope
+  await ctx.plugin(Object.assign((inner: Context) => { scope = createScope(inner, agent) }, { inject: ['tools'] }))
+  Object.assign(agent, { ctx: scope.ctx })
+  return { agent, scope }
 }
 
 const IMAGE_LIMITS: ImageAttachmentLimits = {
@@ -1252,5 +1265,552 @@ describe('tool execution — non-object args fallback', () => {
       undefined,
       expect.anything(),
     )
+  })
+})
+
+describe('capability broker', () => {
+  it('keeps the token host-owned and exposes a candidate-bound invoke schema', async () => {
+    const ctx = await mountRegistry()
+    const { agent, scope } = await mintAgentScope(ctx, 'broker-agent')
+    const searchPayload = {
+      candidates: [{
+        toolId: 'crmapi.lessons.get_course_scheduling',
+        capability: 'Read one date range of scheduled lessons.',
+        argumentSchema: {
+          type: 'object',
+          properties: {
+            BeginDate: { type: 'string' },
+            EndDate: { type: 'string' },
+          },
+          required: ['BeginDate', 'EndDate'],
+          additionalProperties: false,
+        },
+      }],
+      capabilityToken: 'trusted-secret-token',
+      message: 'choose one candidate',
+    }
+    const callTool = vi.fn(async (params: Record<string, unknown>) => {
+      if (params.name === 'search_capabilities') {
+        return { content: [{ type: 'text', text: JSON.stringify(searchPayload) }] }
+      }
+      return { content: [{ type: 'text', text: 'invoked' }] }
+    })
+    const client = {
+      request: vi.fn(async (request: { method: string; params?: Record<string, unknown> }) => {
+        if (request.method === 'tools/list') {
+          return {
+            tools: [
+              {
+                name: 'search_capabilities',
+                inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+              },
+              {
+                name: 'invoke_capability',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    toolId: { type: 'string' },
+                    capabilityToken: { type: 'string' },
+                    arguments: { type: ['object', 'null'], default: null },
+                    references: { type: ['object', 'null'], default: null },
+                  },
+                  required: ['toolId', 'capabilityToken'],
+                },
+              },
+            ],
+            nextCursor: undefined,
+          }
+        }
+        if (request.method === 'tools/call') return callTool(request.params ?? {})
+        throw new Error(`unexpected MCP request: ${request.method}`)
+      }),
+    }
+    const opts: ToolBridgeOptions = {
+      ...defaultOpts,
+      capabilityBroker: {
+        searchToolName: 'search_capabilities',
+        invokeToolName: 'invoke_capability',
+      },
+    }
+    const disposers = await syncTools(client as never, ctx, opts, new Map())
+    const invokeName = 'mcp__srv__invoke_capability'
+    expect(ctx.tools.get(invokeName, agent)).toBeUndefined()
+
+    const searchResult = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('search'),
+      name: 'mcp__srv__search_capabilities',
+      arguments: { query: 'tomorrow lessons' },
+      agent,
+    })
+    expect(searchResult.isError).toBe(false)
+    expect(textAt(searchResult.content)).not.toContain('trusted-secret-token')
+    expect(textAt(searchResult.content)).toContain('crmapi.lessons.get_course_scheduling')
+
+    const invoke = ctx.tools.get(invokeName, agent)
+    const parameters = invoke?.parameters as {
+      properties?: Record<string, { type?: string; const?: string; properties?: Record<string, unknown> }>
+      required?: string[]
+    }
+    expect(parameters.properties?.toolId?.const).toBe('crmapi.lessons.get_course_scheduling')
+    expect(parameters.properties?.arguments?.type).toBe('object')
+    expect(parameters.properties).not.toHaveProperty('capabilityToken')
+    expect(parameters.required).toEqual(['toolId', 'arguments'])
+
+    const invokeResult = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('invoke'),
+      name: invokeName,
+      arguments: {
+        toolId: 'crmapi.lessons.get_course_scheduling',
+        arguments: '{"BeginDate":"2026-09-04","EndDate":"2026-09-05"}',
+      },
+      agent,
+    })
+    expect(invokeResult.isError).toBe(false)
+    expect(callTool).toHaveBeenLastCalledWith({
+      name: 'invoke_capability',
+      arguments: {
+        toolId: 'crmapi.lessons.get_course_scheduling',
+        capabilityToken: 'trusted-secret-token',
+        arguments: { BeginDate: '2026-09-04', EndDate: '2026-09-05' },
+      },
+    })
+
+    for (const dispose of disposers.values()) dispose()
+    expect(ctx.tools.get(invokeName, agent)).toBeUndefined()
+    await scope.dispose()
+  })
+
+  it('rejects a string fallback whose decoded value is not an object', async () => {
+    const ctx = await mountRegistry()
+    const { agent, scope } = await mintAgentScope(ctx, 'invalid-broker-agent')
+    const callTool = vi.fn(async (params: Record<string, unknown>) => {
+      if (params.name !== 'search_capabilities') return { content: [{ type: 'text', text: 'unexpected' }] }
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            candidates: [{ toolId: 'candidate', argumentSchema: { type: 'object', properties: {} } }],
+            capabilityToken: 'token',
+          }),
+        }],
+      }
+    })
+    const client = {
+      request: vi.fn(async (request: { method: string; params?: Record<string, unknown> }) => {
+        if (request.method === 'tools/list') {
+          return {
+            tools: [
+              { name: 'search_capabilities', inputSchema: { type: 'object' } },
+              { name: 'invoke_capability', inputSchema: { type: 'object' } },
+            ],
+            nextCursor: undefined,
+          }
+        }
+        if (request.method === 'tools/call') return callTool(request.params ?? {})
+        throw new Error(`unexpected MCP request: ${request.method}`)
+      }),
+    }
+    await syncTools(client as never, ctx, {
+      ...defaultOpts,
+      capabilityBroker: { searchToolName: 'search_capabilities', invokeToolName: 'invoke_capability' },
+    }, new Map())
+    await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('search'),
+      name: 'mcp__srv__search_capabilities',
+      arguments: {},
+      agent,
+    })
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('invoke'),
+      name: 'mcp__srv__invoke_capability',
+      arguments: { toolId: 'candidate', arguments: '[1,2,3]' },
+      agent,
+    })
+    expect(result.isError).toBe(true)
+    expect(textAt(result.content)).toContain('INVALID_TOOL_ARGUMENTS')
+    expect(callTool).toHaveBeenCalledTimes(1)
+    await scope.dispose()
+  })
+
+  it('keeps searched tokens isolated between Agent scopes', async () => {
+    const ctx = await mountRegistry()
+    const first = await mintAgentScope(ctx, 'broker-agent-a')
+    const second = await mintAgentScope(ctx, 'broker-agent-b')
+    const calls: Record<string, unknown>[] = []
+    const client = {
+      request: vi.fn(async (request: { method: string; params?: Record<string, unknown> }) => {
+        if (request.method === 'tools/list') {
+          return {
+            tools: [
+              { name: 'search_capabilities', inputSchema: { type: 'object' } },
+              { name: 'invoke_capability', inputSchema: { type: 'object' } },
+            ],
+            nextCursor: undefined,
+          }
+        }
+        if (request.method !== 'tools/call') throw new Error(`unexpected MCP request: ${request.method}`)
+        const params = request.params ?? {}
+        calls.push(params)
+        if (params.name === 'search_capabilities') {
+          const args = params.arguments as { agentName?: string }
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                candidates: [{ toolId: `candidate-${args.agentName}`, argumentSchema: { type: 'object' } }],
+                capabilityToken: `token-${args.agentName}`,
+              }),
+            }],
+          }
+        }
+        return { content: [{ type: 'text', text: 'invoked' }] }
+      }),
+    }
+    const disposers = await syncTools(client as never, ctx, {
+      ...defaultOpts,
+      capabilityBroker: { searchToolName: 'search_capabilities', invokeToolName: 'invoke_capability' },
+    }, new Map())
+
+    for (const [agentName, agent] of [['a', first.agent], ['b', second.agent]] as const) {
+      await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId(`search-${agentName}`),
+        name: 'mcp__srv__search_capabilities',
+        arguments: { agentName },
+        agent,
+      })
+    }
+    for (const [agentName, agent] of [['a', first.agent], ['b', second.agent]] as const) {
+      await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId(`invoke-${agentName}`),
+        name: 'mcp__srv__invoke_capability',
+        arguments: { toolId: `candidate-${agentName}`, arguments: {} },
+        agent,
+      })
+    }
+
+    expect(calls.slice(-2)).toEqual([
+      {
+        name: 'invoke_capability',
+        arguments: { toolId: 'candidate-a', arguments: {}, capabilityToken: 'token-a' },
+      },
+      {
+        name: 'invoke_capability',
+        arguments: { toolId: 'candidate-b', arguments: {}, capabilityToken: 'token-b' },
+      },
+    ])
+    for (const dispose of disposers.values()) dispose()
+    await Promise.all([first.scope.dispose(), second.scope.dispose()])
+  })
+
+  it('rejects every malformed broker search result before publishing invoke', async () => {
+    const ctx = await mountRegistry()
+    const { agent, scope } = await mintAgentScope(ctx, 'malformed-search-agent')
+    let searchResult: unknown = { content: [] }
+    const client = {
+      request: vi.fn(async (request: { method: string }) => {
+        if (request.method === 'tools/list') {
+          return {
+            tools: [
+              { name: 'ordinary', inputSchema: { type: 'object' } },
+              { name: 'search_capabilities', inputSchema: { type: 'object' } },
+              { name: 'invoke_capability', inputSchema: { type: 'object' } },
+            ],
+            nextCursor: undefined,
+          }
+        }
+        if (request.method === 'tools/call') return searchResult
+        throw new Error(`unexpected MCP request: ${request.method}`)
+      }),
+    }
+    const disposers = await syncTools(client as never, ctx, {
+      ...defaultOpts,
+      capabilityBroker: { searchToolName: 'search_capabilities', invokeToolName: 'invoke_capability' },
+    }, new Map())
+    const malformed = [
+      { content: [null, { type: 'image' }, { type: 'text', text: 1 }] },
+      { content: [{ type: 'text', text: '{' }] },
+      { content: [{ type: 'text', text: 'null' }] },
+      { content: [{ type: 'text', text: '{}' }] },
+      { content: [{ type: 'text', text: '{"capabilityToken":"","candidates":[{"toolId":"a","argumentSchema":{}}]}' }] },
+      { content: [{ type: 'text', text: '{"candidates":[{"toolId":"a","argumentSchema":{}}]}' }] },
+      { content: [{ type: 'text', text: '{"capabilityToken":"token","candidates":{}}' }] },
+      { content: [{ type: 'text', text: '{"capabilityToken":"token","candidates":[null]}' }] },
+      { content: [{ type: 'text', text: '{"capabilityToken":"token","candidates":[{"toolId":1,"argumentSchema":{}}]}' }] },
+      { content: [{ type: 'text', text: '{"capabilityToken":"token","candidates":[{"toolId":"","argumentSchema":{}}]}' }] },
+      { content: [{ type: 'text', text: '{"capabilityToken":"token","candidates":[{"toolId":"a","argumentSchema":null}]}' }] },
+      { content: [{ type: 'text', text: '{"capabilityToken":"token","candidates":[{"toolId":"a","argumentSchema":{}},{"toolId":"a","argumentSchema":{}}]}' }] },
+      { content: [{ type: 'text', text: '{"capabilityToken":1,"candidates":[]}' }] },
+    ]
+    for (const [index, value] of malformed.entries()) {
+      searchResult = value
+      const result = await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId(`malformed-search-${index}`),
+        name: 'mcp__srv__search_capabilities',
+        arguments: {},
+        agent,
+      })
+      expect(result.isError).toBe(true)
+      expect(textAt(result.content)).toContain('CAPABILITY_BROKER_RESULT_INVALID')
+      expect(ctx.tools.get('mcp__srv__invoke_capability', agent)).toBeUndefined()
+    }
+    for (const dispose of disposers.values()) dispose()
+    await scope.dispose()
+  })
+
+  it('sanitizes structured search output, replaces schemas, and validates invoke arguments locally', async () => {
+    const ctx = await mountRegistry()
+    const { agent, scope } = await mintAgentScope(ctx, 'broker-validation-agent')
+    let searchCount = 0
+    const wireCalls: Record<string, unknown>[] = []
+    const client = {
+      request: vi.fn(async (request: { method: string; params?: Record<string, unknown> }) => {
+        if (request.method === 'tools/list') {
+          return {
+            tools: [
+              {
+                name: 'search_capabilities',
+                inputSchema: { type: 'object' },
+                outputSchema: {
+                  type: 'object',
+                  properties: { capabilityToken: { type: 'string' } },
+                  required: ['capabilityToken'],
+                },
+              },
+              {
+                name: 'invoke_capability',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    toolId: { type: 'string' },
+                    references: { type: 'object', default: {} },
+                  },
+                },
+              },
+            ],
+            nextCursor: undefined,
+          }
+        }
+        if (request.method !== 'tools/call') throw new Error(`unexpected MCP request: ${request.method}`)
+        const params = request.params ?? {}
+        wireCalls.push(params)
+        if (params.name !== 'search_capabilities') return { content: [{ type: 'text', text: 'invoked' }] }
+        searchCount += 1
+        let candidates: Array<{
+          argumentSchema: Record<string, unknown>
+          capability?: string
+          toolId: string
+        }>
+        if (searchCount === 1) {
+          candidates = [{ toolId: 'first', argumentSchema: { type: 'object' } }]
+        } else if (searchCount === 2) {
+          candidates = [
+            { toolId: 'second', capability: 'Second candidate', argumentSchema: { type: 'object' } },
+            { toolId: 'third', argumentSchema: { type: 'object' } },
+          ]
+        } else {
+          candidates = []
+        }
+        const payload = {
+          candidates,
+          ...searchCount < 3 ? { capabilityToken: `token-${searchCount}` } : {},
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify(payload) }],
+          structuredContent: searchCount === 1
+            ? { capabilityToken: `token-${searchCount}`, safe: true }
+            : 'legacy-structured-content',
+        }
+      }),
+    }
+    const disposers = await syncTools(client as never, ctx, {
+      ...defaultOpts,
+      capabilityBroker: { searchToolName: 'search_capabilities', invokeToolName: 'invoke_capability' },
+    }, new Map())
+
+    const firstSearch = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('structured-search-1'),
+      name: 'mcp__srv__search_capabilities',
+      arguments: {},
+      agent,
+    })
+    expect(firstSearch.isError).toBe(false)
+    expect(firstSearch.value).toMatchObject({ structuredContent: { safe: true } })
+    expect(JSON.stringify(firstSearch.value)).not.toContain('token-1')
+
+    const secondSearch = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('structured-search-2'),
+      name: 'mcp__srv__search_capabilities',
+      arguments: {},
+      agent,
+    })
+    expect(secondSearch.isError).toBe(false)
+    expect(secondSearch.value).toMatchObject({ structuredContent: 'legacy-structured-content' })
+    expect(ctx.tools.get('mcp__srv__invoke_capability', agent)?.parameters).toMatchObject({
+      oneOf: [
+        { properties: { toolId: { const: 'second', description: 'Second candidate' } } },
+        { properties: { toolId: { const: 'third' } } },
+      ],
+    })
+
+    const invalidCalls: unknown[] = [
+      'outer-string',
+      { toolId: 'second', arguments: 1 },
+      { toolId: 'second', arguments: '{' },
+      { toolId: 'second', arguments: {}, capabilityToken: 'model-token' },
+      { arguments: {} },
+      { toolId: 'stale', arguments: {} },
+      { toolId: 'second', arguments: {}, references: 'not-an-object' },
+    ]
+    for (const [index, argumentsValue] of invalidCalls.entries()) {
+      const result = await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId(`invalid-invoke-${index}`),
+        name: 'mcp__srv__invoke_capability',
+        arguments: argumentsValue,
+        agent,
+      })
+      expect(result.isError).toBe(true)
+      expect(textAt(result.content)).toContain('INVALID_TOOL_ARGUMENTS')
+    }
+    const callsBeforeValidInvokes = wireCalls.length
+    for (const references of [null, { member: 'ref_1' }]) {
+      const result = await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId(`valid-invoke-${references === null ? 'null' : 'object'}`),
+        name: 'mcp__srv__invoke_capability',
+        arguments: { toolId: 'second', arguments: {}, references },
+        agent,
+      })
+      expect(result.isError).toBe(false)
+    }
+    expect(wireCalls).toHaveLength(callsBeforeValidInvokes + 2)
+    expect(wireCalls.at(-1)).toEqual({
+      name: 'invoke_capability',
+      arguments: {
+        toolId: 'second',
+        capabilityToken: 'token-2',
+        arguments: {},
+        references: { member: 'ref_1' },
+      },
+    })
+
+    const emptySearch = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('structured-search-empty'),
+      name: 'mcp__srv__search_capabilities',
+      arguments: {},
+      agent,
+    })
+    expect(emptySearch.isError).toBe(false)
+    expect(textAt(emptySearch.content)).toContain('"candidates":[]')
+    expect(ctx.tools.get('mcp__srv__invoke_capability', agent)).toBeUndefined()
+
+    await scope.dispose()
+    expect(ctx.tools.get('mcp__srv__invoke_capability', agent)).toBeUndefined()
+    for (const dispose of disposers.values()) {
+      dispose()
+      dispose()
+    }
+  })
+
+  it('fails broker misconfiguration and an Agent-less search before invocation', async () => {
+    const ctx = await mountRegistry()
+    const listed = [
+      { name: 'search_capabilities', inputSchema: { type: 'object' } },
+      { name: 'invoke_capability', inputSchema: { type: 'object' } },
+    ]
+    const client = {
+      request: vi.fn(async (request: { method: string }) => {
+        if (request.method === 'tools/list') return { tools: listed, nextCursor: undefined }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              candidates: [{ toolId: 'candidate', argumentSchema: { type: 'object' } }],
+              capabilityToken: 'token',
+            }),
+          }],
+        }
+      }),
+    }
+    await expect(syncTools(client as never, ctx, {
+      ...defaultOpts,
+      capabilityBroker: { searchToolName: 'search_capabilities', invokeToolName: 'search_capabilities' },
+    }, new Map())).rejects.toThrow(/must be distinct/)
+    await expect(syncTools(client as never, ctx, {
+      ...defaultOpts,
+      capabilityBroker: { searchToolName: 'search_capabilities', invokeToolName: 'missing' },
+    }, new Map())).rejects.toThrow(/requires tools/)
+
+    const disposers = await syncTools(client as never, ctx, {
+      ...defaultOpts,
+      capabilityBroker: { searchToolName: 'search_capabilities', invokeToolName: 'invoke_capability' },
+    }, new Map())
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('agent-less-search'),
+      name: 'mcp__srv__search_capabilities',
+      arguments: {},
+    })
+    expect(result.isError).toBe(true)
+    expect(textAt(result.content)).toContain('CAPABILITY_BROKER_AGENT_REQUIRED')
+    for (const dispose of disposers.values()) dispose()
+  })
+
+  it('rejects a search result that arrives after its broker generation is disposed', async () => {
+    const ctx = await mountRegistry()
+    const { agent, scope } = await mintAgentScope(ctx, 'disposed-broker-agent')
+    const response: PromiseWithResolvers<unknown> = Promise.withResolvers()
+    const started: PromiseWithResolvers<void> = Promise.withResolvers()
+    const client = {
+      request: vi.fn(async (request: { method: string }) => {
+        if (request.method === 'tools/list') {
+          return {
+            tools: [
+              { name: 'search_capabilities', inputSchema: { type: 'object' } },
+              { name: 'invoke_capability', inputSchema: { type: 'object' } },
+            ],
+            nextCursor: undefined,
+          }
+        }
+        started.resolve()
+        return await response.promise
+      }),
+    }
+    const disposers = await syncTools(client as never, ctx, {
+      ...defaultOpts,
+      capabilityBroker: { searchToolName: 'search_capabilities', invokeToolName: 'invoke_capability' },
+    }, new Map())
+    const search = ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('disposed-search'),
+      name: 'mcp__srv__search_capabilities',
+      arguments: {},
+      agent,
+    })
+    await started.promise
+    for (const dispose of disposers.values()) dispose()
+    response.resolve({
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          candidates: [{ toolId: 'candidate', argumentSchema: { type: 'object' } }],
+          capabilityToken: 'token',
+        }),
+      }],
+    })
+    const result = await search
+    expect(result.isError).toBe(true)
+    expect(textAt(result.content)).toContain('CAPABILITY_BROKER_UNAVAILABLE')
+    await scope.dispose()
   })
 })
