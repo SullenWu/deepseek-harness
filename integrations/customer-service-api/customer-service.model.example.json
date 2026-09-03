@@ -1,0 +1,12 @@
+{
+  "provider": "qwen-standard-cn",
+  "model": "qwen3.8-max",
+  "displayName": "Qwen 3.8 Max",
+  "baseUrl": "https://your-qwen-openai-compatible-endpoint/v1",
+  "apiKey": "",
+  "contextWindow": 131072,
+  "maxOutputTokens": 16384,
+  "reasoningEffort": "high",
+  "requestMaxTokens": 8192,
+  "timeoutMilliseconds": 180000
+}

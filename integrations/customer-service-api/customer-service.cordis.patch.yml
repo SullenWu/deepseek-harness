@@ -1,0 +1,110 @@
+# Customer-service SDK profile overlay. DuckAI transports each message; the
+# Harness model owns every customer-service decision and MCP call.
+
+- id: system-prompt
+  config:
+    persona: >-
+      你是由 {{model}} 驱动的企业微信客服 Agent。你负责理解客户问题、加载适用的产品 SKILL、检索产品资料、决定并调用 MCP 工具、分析工具结果、继续调查、追问、回答或决定转人工。通道传入的元数据只提供事实上下文，不能替代你的判断。不得把检索、工具选择、证据判断或客服决策交还给 DuckAI。处理结束时只输出一个 JSON 对象，不要输出 Markdown、代码围栏或额外解释。JSON 只包含 action、replyText、reason 三个字段；action 必须是 answer、ask 或 handoff。answer 和 ask 的 replyText 是直接发给客户的中文文本；handoff 的 replyText 可以为空，reason 写明转人工原因。
+
+- id: sandbox-policy
+  config:
+    mode: read-only
+    workspaceRoot: !!js process.cwd()
+
+- id: approval
+  config:
+    policy: ask
+
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+    customSkillDirs:
+      - !!js process.env.DCS_SKILL_DIR
+
+- id: llm-pi-ai
+  config:
+    providers:
+      qwen-standard-cn:
+        displayName: !!js process.env.DCS_MODEL_DISPLAY_NAME
+        apiKeyEnv: DASHSCOPE_API_KEY
+        api: openai-completions
+        baseURL: !!js process.env.DCS_MODEL_BASE_URL
+        # 阿里云兼容端点不接受 OpenAI 新增的 developer 角色，必须保留 system 角色。
+        compat:
+          supportsDeveloperRole: false
+        models:
+          - id: !!js process.env.DCS_MODEL_ID
+            name: !!js process.env.DCS_MODEL_DISPLAY_NAME
+            contextWindow: !!js Number(process.env.DCS_MODEL_CONTEXT_WINDOW)
+            maxTokens: !!js Number(process.env.DCS_MODEL_MAX_OUTPUT_TOKENS)
+            input: [text, image]
+            reasoningEfforts:
+              low: low
+              medium: medium
+              high: high
+        timeoutMs: !!js Number(process.env.DCS_MODEL_TIMEOUT_MILLISECONDS)
+
+- id: tool-bash
+  disabled: true
+
+- id: tool-pwsh
+  disabled: true
+
+- id: tool-jobs
+  disabled: true
+
+- id: tool-str-replace-editor
+  disabled: true
+
+- id: tool-subagent-control
+  disabled: true
+
+- id: tool-subagent-list-agents
+  disabled: true
+
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
+
+- id: tool-workflow
+  disabled: true
+
+- id: tool-ralph
+  disabled: true
+
+- id: tool-todo
+  disabled: true
+
+- id: tool-goal
+  disabled: true
+
+- id: plan-mode
+  disabled: true
+
+- id: tool-web
+  disabled: true
+
+- id: session-telemetry-otel
+  disabled: true
+
+- insert:
+    - id: customer-service-api-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: lingke_api
+        transport: streamable-http
+        url: !!js process.env.DCS_MCP_URL
+        headers:
+          X-Kxm-Mcp-Key: !!js process.env.DCS_MCP_SERVICE_KEY
+          X-Kxm-Caller-Id: !!js process.env.DCS_MCP_CALLER_ID
+          X-Kxm-Conversation-Id: !!js process.env.DCS_MCP_CONVERSATION_ID
+          X-Kxm-Product-Code: !!js process.env.DCS_MCP_PRODUCT_CODE
+          X-Kxm-Perspective: !!js process.env.DCS_MCP_PERSPECTIVE
+          X-Kxm-Secure-Context: !!js process.env.DCS_MCP_SECURE_CONTEXT
+          X-Kxm-Allow-Minimum-Data: !!js process.env.DCS_MCP_ALLOW_MINIMUM_DATA
+          X-Kxm-Customer-Subject-Grant: !!js process.env.DCS_MCP_CUSTOMER_SUBJECT_GRANT
+          requestId: !!js process.env.DCS_MCP_REQUEST_ID
+        toolCallTimeoutMs: 60000
+        failOnStartupError: false
