@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-sdk-jsonrpc-server` 通过 stdio 服务 SDK 协议格式，使进程外客户端能够驱动 harness agent（智能体）：它为每个 `sessionId` 打开一个会话、把用户提示词排入队列，并把每个会话事件与 agent 状态转换实时流回客户端。把它作为 `jsonrpc` 插件挂载到 Loader 组合中；外围插件树提供其余一切——agent、模型适配器、持久化与工具。Stdout 只承载 JSON-RPC 帧，因此部署不得组合 stdout logger。它通过 dispose（资源释放）根运行时并以 0 退出应答 `shutdown`；EOF 与信号退出归 app bin 负责。
+`dsh-sdk-jsonrpc-server` 通过 stdio 服务 SDK 协议格式，使进程外客户端能够驱动 harness agent（智能体）：它为每个 `sessionId` 激活一个会话、把用户提示词排入队列，并把每个会话事件与 agent 状态转换实时流回客户端。把它作为 `jsonrpc` 插件挂载到 Loader 组合中；外围插件树提供其余一切——agent、模型适配器、持久化与工具。Stdout 只承载 JSON-RPC 帧，因此部署不得组合 stdout logger。它通过 dispose（资源释放）根运行时并以 0 退出应答 `shutdown`；EOF 与信号退出归 app bin 负责。
 
 ## 目录
 
@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### 组装
 
-插件在首次使用时为每个 `sessionId` 创建一个 agent。已注册的模型适配器赢得路由；尚无适配器负责的 `deepseek-official` 路由会挂载 DeepSeek 适配器，任何其他尚无适配器负责的提供方都会导致初始化失败。初始化成功前，所选适配器会解析确切模型与可选推理强度。
+在一个运行时中首次使用某个 `sessionId` 时，插件会检查外围持久化服务。如果同一初始化 `cwd` 中已有持久会话，插件会恢复该会话；如果不存在，则创建新会话；如果已有会话的 `cwd` 不同或缺失，则拒绝恢复。没有持久化服务时，插件会创建进程本地会话。同一运行时的后续提示词复用已激活的 agent。已注册的模型适配器赢得路由；尚无适配器负责的 `deepseek-official` 路由会挂载 DeepSeek 适配器，任何其他尚无适配器负责的提供方都会导致初始化失败。初始化成功前，所选适配器会解析确切模型与可选推理强度。
 
 ### 配置
 
@@ -70,7 +70,7 @@ Stdout 只承载 JSON-RPC 帧，客户端可以逐字节解析；诊断信息应
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、stdio 接线、请求分发、共享关闭/退出任务 |
-| [`src/server.ts`](src/server.ts) | `HarnessSdkJsonRpcServer`：协议方法、逐会话 agent 创建、生命周期订阅、清理 |
+| [`src/server.ts`](src/server.ts) | `HarnessSdkJsonRpcServer`：协议方法、逐会话 agent 激活、生命周期订阅、清理 |
 | — | 不发布运行时不变式伴生入口；边界与回放测试覆盖协议映射。 |
 
 ### 请求流程

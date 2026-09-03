@@ -92,12 +92,11 @@ SNAPSHOT_SESSION_ID = "advanced-executable"
 SNAPSHOT_DIRECT_CHILD_PROMPT = "Reply with exactly DIRECT_CHILD_OK and nothing else."
 SNAPSHOT_WORKFLOW_CHILD_PROMPT = "Reply with exactly WORKFLOW_CHILD_OK and nothing else."
 SNAPSHOT_FINAL_TEXT = "ADVANCED_EXECUTABLE_OK"
-RESTART_FIRST_PROMPT = "Complete the first isolated Python SDK process turn."
+RESTART_FIRST_PROMPT = "Complete the first Python SDK process turn."
 RESTART_FIRST_TEXT = "PROCESS_ONE_OK"
-RESTART_SECOND_PROMPT = "Complete the second isolated Python SDK process turn."
+RESTART_SECOND_PROMPT = "Continue the same session in a second Python SDK process."
 RESTART_SECOND_TEXT = "PROCESS_TWO_OK"
-RESTART_FIRST_SESSION_ID = "process-one"
-RESTART_SECOND_SESSION_ID = "process-two"
+RESTART_SESSION_ID = "restart-session"
 SNAPSHOT_PLUGIN_CODE = """\
 return (ctx) => {
   harness.registerTool(ctx, harness.defineTool({
@@ -134,7 +133,7 @@ MINIMAL_SNAPSHOT_FILENAMES = ("model-visible.json",)
 RESTART_SNAPSHOT_DIRECTORY = (
     Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "restart"
 )
-RESTART_SNAPSHOT_FILENAMES = ("result.json", "requests.json", "session.1.jsonl", "session.2.jsonl")
+RESTART_SNAPSHOT_FILENAMES = ("result.json", "requests.json", "session.jsonl")
 MCP_SERVER_SCRIPT = """\
 import json
 import os
@@ -395,12 +394,13 @@ def completion_chunks(body: dict[str, object]) -> list[dict[str, object]]:
     if prompt == RESTART_FIRST_PROMPT:
         return text_chunks(RESTART_FIRST_TEXT)
     if prompt == RESTART_SECOND_PROMPT:
-        if any(
-            isinstance(message, dict)
-            and RESTART_FIRST_TEXT in message_text(message.get("content"))
+        rendered = "\n".join(
+            message_text(message.get("content"))
             for message in messages
-        ):
-            raise AssertionError("second isolated process inherited the first process history")
+            if isinstance(message, dict)
+        )
+        if RESTART_FIRST_PROMPT not in rendered or RESTART_FIRST_TEXT not in rendered:
+            raise AssertionError("second SDK process did not resume the first process history")
         return text_chunks(RESTART_SECOND_TEXT)
     if prompt == CODE_PROMPT:
         assert_advertised_tool(body, "run_code")
@@ -1305,7 +1305,7 @@ def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) 
 
 
 def smoke_sdk_restart_snapshot(base_url: str, executable: Path, update_snapshots: bool) -> None:
-    """Snapshot two isolated sessions across complete SDK runtime restarts."""
+    """Snapshot one durable session continued across complete SDK runtime restarts."""
     from deepseek_harness import DeepSeekHarness
 
     with tempfile.TemporaryDirectory(prefix="dsh-sdk-restart-") as temporary:
@@ -1333,8 +1333,8 @@ def smoke_sdk_restart_snapshot(base_url: str, executable: Path, update_snapshots
             ) as harness:
                 return harness.run(prompt, session_id=session_id)
 
-        first = run(RESTART_FIRST_PROMPT, RESTART_FIRST_SESSION_ID)
-        second = run(RESTART_SECOND_PROMPT, RESTART_SECOND_SESSION_ID)
+        first = run(RESTART_FIRST_PROMPT, RESTART_SESSION_ID)
+        second = run(RESTART_SECOND_PROMPT, RESTART_SESSION_ID)
         requests = MockModelHandler.requests[first_request:]
         if len(requests) != 2:
             raise AssertionError(f"restart snapshot expected two model requests: {requests}")
@@ -1344,18 +1344,14 @@ def smoke_sdk_restart_snapshot(base_url: str, executable: Path, update_snapshots
             )
 
         logs = read_session_logs(sessions)
-        expected_ids = {RESTART_FIRST_SESSION_ID, RESTART_SECOND_SESSION_ID}
-        if set(logs) != expected_ids:
-            raise AssertionError(f"restart snapshot expected two durable sessions: {sorted(logs)}")
-        for session_id, expected in (
-            (RESTART_FIRST_SESSION_ID, RESTART_FIRST_TEXT),
-            (RESTART_SECOND_SESSION_ID, RESTART_SECOND_TEXT),
-        ):
-            records = logs[session_id]
-            if sum(record.get("type") == "turn/end" for record in records) != 1:
-                raise AssertionError(f"restart snapshot {session_id} has an unexpected turn count")
-            if expected not in render_jsonl(records):
-                raise AssertionError(f"restart snapshot durable log has no {expected}")
+        if set(logs) != {RESTART_SESSION_ID}:
+            raise AssertionError(f"restart snapshot expected one durable session: {sorted(logs)}")
+        records = logs[RESTART_SESSION_ID]
+        if sum(record.get("type") == "turn/end" for record in records) != 2:
+            raise AssertionError("restart snapshot durable session has an unexpected turn count")
+        rendered = render_jsonl(records)
+        if RESTART_FIRST_TEXT not in rendered or RESTART_SECOND_TEXT not in rendered:
+            raise AssertionError("restart snapshot durable log is missing a process response")
 
         files = build_restart_snapshot_files(first, second, requests, logs, root, sessions)
         compare_snapshot_files(
@@ -1651,12 +1647,11 @@ def build_restart_snapshot_files(
     cwd: Path,
     sessions: Path,
 ) -> dict[str, str]:
-    """Render two SDK processes, isolated model histories, and durable logs."""
+    """Render two SDK processes and their shared durable model history."""
     replacements = [
         (str(sessions), "{{sessions}}"),
         (str(cwd), "{{cwd}}"),
-        (RESTART_FIRST_SESSION_ID, "{{session-1}}"),
-        (RESTART_SECOND_SESSION_ID, "{{session-2}}"),
+        (RESTART_SESSION_ID, "{{session}}"),
     ]
     result_value = [
         {
@@ -1683,11 +1678,8 @@ def build_restart_snapshot_files(
         "requests.json": json.dumps(
             normalize_snapshot_value(request_value, replacements), indent=2, ensure_ascii=False,
         ) + "\n",
-        "session.1.jsonl": render_jsonl(project_session_snapshot([
-            normalize_snapshot_value(record, replacements) for record in logs[RESTART_FIRST_SESSION_ID]
-        ])),
-        "session.2.jsonl": render_jsonl(project_session_snapshot([
-            normalize_snapshot_value(record, replacements) for record in logs[RESTART_SECOND_SESSION_ID]
+        "session.jsonl": render_jsonl(project_session_snapshot([
+            normalize_snapshot_value(record, replacements) for record in logs[RESTART_SESSION_ID]
         ])),
     }
 

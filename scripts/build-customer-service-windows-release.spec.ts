@@ -23,6 +23,7 @@ describe('customer-service Windows release builder', () => {
     const script = await read('scripts/build-customer-service-windows-release.ps1')
 
     expect(script).toContain("'customer-service.model.example.json'")
+    expect(script).toContain("'cleanup_sessions.py'")
     expect(script).not.toMatch(/Copy-Item[^\n]+customer-service\.model\.json/)
   })
 

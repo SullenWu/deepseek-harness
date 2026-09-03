@@ -44,6 +44,81 @@ function waitForLine(
   })
 }
 
+async function runSdkTurn(options: {
+  root: string
+  modelUrl: string
+  sessionId: string
+  prompt: string
+}): Promise<void> {
+  const child = execa(process.execPath, [
+    '--import',
+    'tsx/esm',
+    binScript,
+    '--profile',
+    'sdk',
+  ], {
+    cwd: repoRoot,
+    env: {
+      DSH_HOME: join(options.root, '.dsh'),
+      DSH_PERMISSION_MODE: 'danger-full-access',
+      DSH_TELEMETRY_DISABLED: '1',
+      DEEPSEEK_API_KEY: 'keyless-smoke-no-call',
+      DEEPSEEK_BASE_URL: options.modelUrl,
+    },
+    timeout: 35_000,
+    killSignal: 'SIGKILL',
+    reject: false,
+  })
+  const lines: string[] = []
+  let stdoutBuffer = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdoutBuffer += chunk.toString('utf8')
+    const parts = stdoutBuffer.split('\n')
+    stdoutBuffer = parts.pop() ?? ''
+    lines.push(...parts)
+  })
+  child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+
+  try {
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        cwd: options.root,
+        provider: 'deepseek-official',
+        model: 'deepseek-v4-pro',
+      },
+    })}\n`)
+    const initialized = await waitForLine(lines, value => value.id === 1, () => stderr)
+    expect(initialized).toMatchObject({ id: 1, result: { serverInfo: { name: 'deepseek-harness-sdk-runtime' } } })
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'session/prompt',
+      params: {
+        sessionId: options.sessionId,
+        contentBlocks: [{ type: 'text', text: options.prompt }],
+      },
+    })}\n`)
+    await waitForLine(lines, (value) => {
+      const params = value.params as Record<string, unknown> | undefined
+      const event = params?.event as Record<string, unknown> | undefined
+      return params?.sessionId === options.sessionId && event?.type === 'turn/end'
+    }, () => stderr)
+
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'shutdown' })}\n`)
+    await waitForLine(lines, value => value.id === 3, () => stderr)
+    const exit = await child
+    expect(exit.exitCode, `signal=${String(exit.signal)}; stderr=${stderr}`).toBe(0)
+  } finally {
+    child.kill('SIGKILL')
+    await child
+  }
+}
+
 describe('Python SDK dsh profile keyless smoke', () => {
   it.each([
     { label: 'reports max-token turns with the default mapping config', envValue: undefined },
@@ -177,6 +252,40 @@ describe('Python SDK dsh profile keyless smoke', () => {
       await rm(root, { recursive: true, force: true })
     }
   }, 40_000)
+
+  it('continues one persisted session after the SDK runtime restarts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-python-sdk-runtime-resume-'))
+    const modelRequests: Record<string, unknown>[] = []
+    const modelServer = createServer((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk: string) => { body += chunk })
+      request.on('end', () => {
+        modelRequests.push(JSON.parse(body) as Record<string, unknown>)
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.write('data: {"choices":[{"delta":{"role":"assistant","content":null}}]}\n\n')
+        response.write('data: {"choices":[{"delta":{"content":"done"}}]}\n\n')
+        response.write('data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}\n\n')
+        response.end('data: [DONE]\n\n')
+      })
+    })
+    await new Promise<void>(resolve => modelServer.listen(0, '127.0.0.1', resolve))
+    const address = modelServer.address()
+    if (address === null || typeof address === 'string') throw new Error('model server did not bind a TCP port')
+    const modelUrl = `http://127.0.0.1:${address.port}`
+
+    try {
+      await runSdkTurn({ root, modelUrl, sessionId: 'restart-session', prompt: 'first process turn' })
+      await runSdkTurn({ root, modelUrl, sessionId: 'restart-session', prompt: 'second process turn' })
+
+      expect(modelRequests).toHaveLength(2)
+      expect(JSON.stringify(modelRequests[1])).toContain('first process turn')
+      expect(JSON.stringify(modelRequests[1])).toContain('second process turn')
+    } finally {
+      await new Promise<void>(resolve => modelServer.close(() => { resolve() }))
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 75_000)
 
   it('boots the standalone minimal profile through its generated manifest', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-python-sdk-minimal-'))

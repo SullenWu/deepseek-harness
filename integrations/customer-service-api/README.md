@@ -102,13 +102,40 @@ Harness returns one decision. The transport caller sends `replyText` for `answer
   "action": "answer",
   "replyText": "……",
   "reason": "",
-  "sessionId": "customer-service-opaque-conversation-id",
+  "sessionId": "customer-service-v2-opaque-conversation-id",
   "traceId": "dcs_...",
   "finishReason": "completed"
 }
 ```
 
 The SDK accepts inline PNG, JPEG, WebP, and GIF images. This integration rejects other attachment types instead of summarizing them outside Harness.
+
+## Conversation episodes and retention
+
+DuckAI supplies an opaque `v2-<sha256>` conversation id derived from the customer-service account,
+external customer, normalized product, store scope, and one Redis-persisted random episode. Repeated
+messages and retries reuse the episode. A new WeCom entry, the 48-hour DuckAI context expiring, an
+explicit session end, or a product/store scope change creates another episode. Operator changes alone
+do not rotate it; API authorization is still revalidated from the current request context.
+
+The JSONL persistence backend does not delete sessions. Use the bundled cleanup tool only against this
+integration's isolated `DCS_DSH_HOME`. It defaults to a dry-run:
+
+```sh
+python integrations/customer-service-api/cleanup_sessions.py --older-than-days 90
+```
+
+Stop the customer-service API before applying the reviewed result. The explicit confirmation is required
+because the persistence backend has no cross-process writer lease or deletion API:
+
+```sh
+python integrations/customer-service-api/cleanup_sessions.py \
+  --older-than-days 90 --apply --confirm-service-stopped
+```
+
+The tool only matches fixed Harness log artifacts inside session directories whose ids start with
+`customer-service-`; it refuses filesystem roots and user-home targets. Never replace it with a recursive
+removal of `DCS_DSH_HOME`.
 
 ## Current limitations
 

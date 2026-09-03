@@ -182,7 +182,7 @@ try {
     Copy-Item -LiteralPath $RuntimeSource -Destination (Join-Path $RuntimeRoot $RuntimeName)
     Copy-Item -LiteralPath $RuntimeRgSource -Destination (Join-Path $RuntimeRoot $RuntimeRgName)
     Copy-Item -Path (Join-Path $WheelRoot '*.whl') -Destination $ReleaseWheelRoot
-    foreach ($Filename in @('server.py', 'customer-service.cordis.patch.yml', 'customer-service.model.example.json', 'README.md')) {
+    foreach ($Filename in @('server.py', 'cleanup_sessions.py', 'customer-service.cordis.patch.yml', 'customer-service.model.example.json', 'README.md')) {
         Copy-Item `
             -LiteralPath (Join-Path $Root "integrations\customer-service-api\$Filename") `
             -Destination (Join-Path $ServiceRoot $Filename)

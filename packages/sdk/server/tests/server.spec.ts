@@ -183,6 +183,54 @@ describe('HarnessSdkJsonRpcServer', () => {
     }
   })
 
+  it('resumes one persisted session across complete server contexts', { timeout: 15_000 }, async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), 'dsh-jsonrpc-resume-'))
+    const llmServer = await mockCompletionServer()
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key')
+    vi.stubEnv('DEEPSEEK_BASE_URL', llmServer.url)
+    let firstContext: Context | undefined
+    let secondContext: Context | undefined
+    try {
+      firstContext = await makeHarness(storageDir)
+      const firstTransport = new FakeTransport()
+      const firstServer = new HarnessSdkJsonRpcServer(firstContext, firstTransport)
+      await firstServer.initialize({ cwd: storageDir, provider: 'deepseek-official', model: 'dsagent-model' })
+      await firstServer.prompt({
+        sessionId: 'persisted',
+        contentBlocks: [{ type: 'text', text: 'first persisted turn' }],
+      })
+      await vi.waitFor(() => {
+        expect(firstTransport.notifications.findLast(notification => notification.method === 'session.status'))
+          .toEqual({ method: 'session.status', params: { sessionId: 'persisted', status: 'idle' } })
+      })
+      await firstServer.shutdown()
+      await firstContext.fiber.dispose()
+      firstContext = undefined
+
+      secondContext = await makeHarness(storageDir)
+      const secondTransport = new FakeTransport()
+      const secondServer = new HarnessSdkJsonRpcServer(secondContext, secondTransport)
+      await secondServer.initialize({ cwd: storageDir, provider: 'deepseek-official', model: 'dsagent-model' })
+      await secondServer.prompt({
+        sessionId: 'persisted',
+        contentBlocks: [{ type: 'text', text: 'second resumed turn' }],
+      })
+      await vi.waitFor(() => {
+        expect(secondTransport.notifications.findLast(notification => notification.method === 'session.status'))
+          .toEqual({ method: 'session.status', params: { sessionId: 'persisted', status: 'idle' } })
+      })
+
+      expect(llmServer.requests).toHaveLength(2)
+      expect(JSON.stringify(llmServer.requests[1])).toContain('first persisted turn')
+      expect(JSON.stringify(llmServer.requests[1])).toContain('second resumed turn')
+      await secondServer.shutdown()
+    } finally {
+      await firstContext?.fiber.dispose()
+      await secondContext?.fiber.dispose()
+      await rm(storageDir, { recursive: true, force: true })
+    }
+  })
+
   it('queues overlapping prompts for one session without blocking other sessions', async () => {
     const mainFollowup = vi.fn<Agent['followup']>()
     const mainAgent = ({
@@ -1100,25 +1148,25 @@ describe('HarnessSdkJsonRpcServer', () => {
       get: () => undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
-      getOrCreateSession(sessionId: string): Promise<{ handle: AgentHandle }>
+      getOrActivateSession(sessionId: string): Promise<{ handle: AgentHandle }>
       shutdown(): Promise<Record<string, never>>
     }
 
-    const first = server.getOrCreateSession('shared')
-    const second = server.getOrCreateSession('shared')
+    const first = server.getOrActivateSession('shared')
+    const second = server.getOrActivateSession('shared')
     expect(create).toHaveBeenCalledTimes(1)
     resolveShared?.(sharedHandle)
     const [firstRecord, secondRecord] = await Promise.all([first, second])
     expect(firstRecord).toBe(secondRecord)
 
-    await expect(server.getOrCreateSession('retry')).rejects.toThrow('creation failed')
-    await expect(server.getOrCreateSession('retry')).resolves.toMatchObject({ handle: retryHandle })
+    await expect(server.getOrActivateSession('retry')).rejects.toThrow('creation failed')
+    await expect(server.getOrActivateSession('retry')).resolves.toMatchObject({ handle: retryHandle })
     expect(create).toHaveBeenCalledTimes(3)
 
     await server.shutdown()
     expect(sharedHandle.dispose).toHaveBeenCalledOnce()
     expect(retryHandle.dispose).toHaveBeenCalledOnce()
-    await expect(server.getOrCreateSession('after-shutdown')).rejects.toThrow('SDK server is shutting down')
+    await expect(server.getOrActivateSession('after-shutdown')).rejects.toThrow('SDK server is shutting down')
   })
 
   it('resolves a relative cwd before creating the session', async () => {
@@ -1128,16 +1176,18 @@ describe('HarnessSdkJsonRpcServer', () => {
     const ctx = {
       on: vi.fn(() => () => undefined),
       agents: { create, get: () => undefined },
-      get: () => ({ listProviders: () => [{ id: 'mock', name: 'Mock' }], resolveCallConfig }),
+      get: (name: string) => name === 'llm'
+        ? { listProviders: () => [{ id: 'mock', name: 'Mock' }], resolveCallConfig }
+        : undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
       initialize(params: { cwd: string; provider: string; model: string; reasoningEffort?: string; maxTokens?: number }): Promise<unknown>
-      getOrCreateSession(sessionId: string): Promise<unknown>
+      getOrActivateSession(sessionId: string): Promise<unknown>
       shutdown(): Promise<Record<string, never>>
     }
 
     await server.initialize({ cwd: '.', provider: 'mock', model: 'model', reasoningEffort: 'high', maxTokens: 123 })
-    await server.getOrCreateSession('relative')
+    await server.getOrActivateSession('relative')
 
     expect(resolveCallConfig).toHaveBeenCalledWith({
       provider: 'mock',
@@ -1154,6 +1204,27 @@ describe('HarnessSdkJsonRpcServer', () => {
         maxTokens: 123,
       },
     }))
+    await server.shutdown()
+  })
+
+  it('refuses to resume a persisted session from another workspace', async () => {
+    const create = vi.fn()
+    const resume = vi.fn()
+    const stat = vi.fn(async () => ({ header: { cwd: '/other/workspace' } }))
+    const ctx = {
+      on: vi.fn(() => () => undefined),
+      agents: { create, resume, get: () => undefined },
+      get: (name: string) => name === 'sessionPersistence' ? { stat } : undefined,
+    } as unknown as Context
+    const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
+      getOrActivateSession(sessionId: string): Promise<unknown>
+      shutdown(): Promise<Record<string, never>>
+    }
+
+    await expect(server.getOrActivateSession('wrong-workspace'))
+      .rejects.toThrow('persisted session cwd does not match SDK initialization cwd: wrong-workspace')
+    expect(create).not.toHaveBeenCalled()
+    expect(resume).not.toHaveBeenCalled()
     await server.shutdown()
   })
 

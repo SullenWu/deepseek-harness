@@ -87,7 +87,7 @@ describe('isPhysicalSessionFixture', () => {
       'scripts/snapshots/python-sdk-single-exe/advanced/session.jsonl',
     )).toBe(true)
     expect(isPhysicalSessionFixture(
-      'scripts/snapshots/python-sdk-single-exe/restart/session.2.jsonl',
+      'scripts/snapshots/python-sdk-single-exe/restart/session.jsonl',
     )).toBe(true)
     expect(isPhysicalSessionFixture(
       'packages/experimental/webworker-runtime/tests/fixtures/vfs-example/home/sessions/README.jsonl',

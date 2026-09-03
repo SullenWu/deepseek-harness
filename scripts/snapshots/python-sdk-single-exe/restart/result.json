@@ -1,6 +1,6 @@
 [
   {
-    "session_id": "{{session-1}}",
+    "session_id": "{{session}}",
     "final_response": "PROCESS_ONE_OK",
     "finish_reason": "completed",
     "eventTypes": [
@@ -47,7 +47,7 @@
     ]
   },
   {
-    "session_id": "{{session-2}}",
+    "session_id": "{{session}}",
     "final_response": "PROCESS_TWO_OK",
     "finish_reason": "completed",
     "eventTypes": [
@@ -56,10 +56,7 @@
       "agent/inbox/spliced",
       "step/start",
       "user/message",
-      "user/message",
-      "session/title",
       "request/header",
-      "request/context",
       "session-log-deepseek/delivery-accepted",
       "assistant/chunk",
       "assistant/chunk",
@@ -73,9 +70,6 @@
     "notificationMethods": [
       "session.event",
       "session.status",
-      "session.event",
-      "session.event",
-      "session.event",
       "session.event",
       "session.event",
       "session.event",

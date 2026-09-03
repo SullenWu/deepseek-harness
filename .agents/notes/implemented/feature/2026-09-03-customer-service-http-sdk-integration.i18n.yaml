@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-03-customer-service-http-sdk-integration.md
-2026-09-03-customer-service-http-sdk-integration.md: a0d07c3dc8863b6473885fa16c51d4a612a1d340
-2026-09-03-customer-service-http-sdk-integration.zh.md: 9b3a3fe0215c101ff74dd8b4ceef33a3621f1333
+2026-09-03-customer-service-http-sdk-integration.md: cc2021956f962bd0da97770c7904a504d6d4c57c
+2026-09-03-customer-service-http-sdk-integration.zh.md: ac43e68ede6e098baa3b59ddf2a36f2be4daead4
