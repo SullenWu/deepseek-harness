@@ -9,7 +9,7 @@
 构建电脑需要提前准备：
 
 - Node.js 24 x64
-- Python 3.10 x64，并安装 Windows Python Launcher（`py`）
+- Python 3.10 至 3.14 x64，可由 Windows Python Launcher（`py`）定位，或已作为 `python.exe` 加入 `PATH`
 - pnpm 11.7.0
 - Windows 开发者模式
 

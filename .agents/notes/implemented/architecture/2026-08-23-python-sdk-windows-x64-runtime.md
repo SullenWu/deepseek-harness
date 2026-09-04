@@ -18,7 +18,7 @@ The Python process still launches the ordinary `dsh --profile sdk` application a
 
 ### Native build and publication
 
-The executable builder accepts `win` as a pkg platform only with x64, requires the Windows build to run under x64 Node on a Windows host, preserves `.exe` names, and copies `@vscode/ripgrep-win32-x64` as the conventional `-rg.exe` sidecar. Pnpm subprocesses use a caller-supplied JavaScript entry through `process.execPath`. When the caller exposes a `.cmd` shim, the builder resolves the installed `pnpm.mjs` or `pnpm.cjs` through `PNPM_HOME`; it fails if no JavaScript entry exists instead of spawning the shim or enabling a command shell.
+The executable builder accepts `win` as a pkg platform only with x64, requires the Windows build to run under x64 Node on a Windows host, preserves `.exe` names, and copies `@vscode/ripgrep-win32-x64` as the conventional `-rg.exe` sidecar. Pnpm subprocesses use a caller-supplied JavaScript entry through `process.execPath`. When the caller exposes a `.cmd` shim, the builder resolves the installed `pnpm.mjs` or `pnpm.cjs` through `PNPM_HOME`; it fails if no JavaScript entry exists instead of spawning the shim or enabling a command shell. The customer-service release script supplies `npm_execpath` from npm's global `pnpm` package when the ambient shell exposes only `pnpm.ps1`/`pnpm.cmd`.
 
 The required GitHub matrix builds `node24-win-x64` on `windows-2025` beside the three existing targets. The public GitHub release and GitLab tag pipeline each publish the same four runtime wheels plus the pure SDK wheel. Windows arm64 is absent from target parsing, manifests, matrices, release contents, and documentation.
 

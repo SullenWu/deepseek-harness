@@ -33,6 +33,80 @@ function Invoke-CheckedCommand {
     }
 }
 
+function Invoke-CheckedOutputCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$FailureMessage,
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    try {
+        $Output = & $Command @Arguments
+    }
+    catch {
+        throw $FailureMessage
+    }
+    if ($LASTEXITCODE -ne 0 -or $null -eq $Output) {
+        throw $FailureMessage
+    }
+    return ($Output -join "`n").Trim()
+}
+
+function Get-SupportedPythonExe {
+    $CpythonProbe = 'import sys; ok=sys.implementation.name==chr(99)+chr(112)+chr(121)+chr(116)+chr(104)+chr(111)+chr(110) and sys.maxsize > 2**32; print(sys.executable) if ok else None'
+    foreach ($Version in @('3.14', '3.13', '3.12', '3.11', '3.10')) {
+        try {
+            $Output = & py "-$Version" -c $CpythonProbe 2>$null
+        }
+        catch {
+            # The Python launcher may be absent on build hosts that expose python.exe directly.
+            $Output = $null
+        }
+        if ($LASTEXITCODE -eq 0 -and $null -ne $Output) {
+            $Candidate = ($Output -join "`n").Trim()
+            if ($Candidate) {
+                return $Candidate
+            }
+        }
+    }
+
+    try {
+        $Output = & python -c 'import sys; version=sys.version_info[:2]; ok=sys.implementation.name==chr(99)+chr(112)+chr(121)+chr(116)+chr(104)+chr(111)+chr(110) and (3, 10) <= version <= (3, 14) and sys.maxsize > 2**32; print(sys.executable) if ok else None' 2>$null
+    }
+    catch {
+        # Some Windows builders have only the py launcher and no python.exe on PATH.
+        return $null
+    }
+    if ($LASTEXITCODE -ne 0 -or $null -eq $Output) {
+        return $null
+    }
+    $Candidate = ($Output -join "`n").Trim()
+    if (-not $Candidate) {
+        return $null
+    }
+    return $Candidate
+}
+
+function Get-PnpmEntrypoint {
+    $ExistingEntrypoint = $env:npm_execpath
+    if ($ExistingEntrypoint -and (Test-Path -LiteralPath $ExistingEntrypoint -PathType Leaf) -and [System.IO.Path]::GetExtension($ExistingEntrypoint) -in @('.js', '.cjs', '.mjs')) {
+        return $ExistingEntrypoint
+    }
+
+    $PnpmCommand = Get-Command pnpm -ErrorAction SilentlyContinue
+    if ($null -eq $PnpmCommand -or -not $PnpmCommand.Source) {
+        return $null
+    }
+    $PnpmRoot = Split-Path -Parent $PnpmCommand.Source
+    foreach ($Filename in @('pnpm.mjs', 'pnpm.cjs')) {
+        $Candidate = Join-Path $PnpmRoot "node_modules\pnpm\bin\$Filename"
+        if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+            return $Candidate
+        }
+    }
+    return $null
+}
+
 function Remove-GeneratedPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -56,38 +130,45 @@ if (-not [Environment]::Is64BitProcess) {
 
 Push-Location $Root
 try {
-    $NodeVersion = (& node --version).Trim()
-    if ($LASTEXITCODE -ne 0 -or $NodeVersion -notmatch '^v24\.') {
+    $NodeVersion = Invoke-CheckedOutputCommand 'Node.js 24 x64 is required.' 'node' @('--version')
+    if ($NodeVersion -notmatch '^v24\.') {
         throw "Node.js 24 x64 is required; found '$NodeVersion'."
     }
-    $NodeArchitecture = (& node -p 'process.arch').Trim()
-    if ($LASTEXITCODE -ne 0 -or $NodeArchitecture -ne 'x64') {
+    $NodeArchitecture = Invoke-CheckedOutputCommand 'Node.js 24 x64 is required.' 'node' @('-p', 'process.arch')
+    if ($NodeArchitecture -ne 'x64') {
         throw "Node.js 24 x64 is required; found architecture '$NodeArchitecture'."
     }
-    $PnpmVersion = (& pnpm --version).Trim()
-    if ($LASTEXITCODE -ne 0 -or $PnpmVersion -ne '11.7.0') {
+    $PnpmVersion = Invoke-CheckedOutputCommand 'pnpm 11.7.0 is required. Run: corepack prepare pnpm@11.7.0 --activate' 'pnpm' @('--version')
+    if ($PnpmVersion -ne '11.7.0') {
         throw "pnpm 11.7.0 is required; found '$PnpmVersion'. Run: corepack prepare pnpm@11.7.0 --activate"
     }
+    $PnpmEntrypoint = Get-PnpmEntrypoint
+    if ($null -eq $PnpmEntrypoint) {
+        throw 'pnpm must expose a JavaScript entrypoint for the Windows runtime build.'
+    }
+    $env:npm_execpath = $PnpmEntrypoint
 
     # pkg needs Windows symlink support while it stages the dependency closure.
-    $DeveloperMode = Get-ItemPropertyValue `
-        -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' `
-        -Name 'AllowDevelopmentWithoutDevLicense' `
-        -ErrorAction SilentlyContinue
+    $DeveloperMode = 0
+    $DeveloperModeKeyPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+    if (Test-Path -LiteralPath $DeveloperModeKeyPath) {
+        $DeveloperModeKey = Get-ItemProperty -LiteralPath $DeveloperModeKeyPath
+        $DeveloperModeProperty = $DeveloperModeKey.PSObject.Properties['AllowDevelopmentWithoutDevLicense']
+        if ($null -ne $DeveloperModeProperty) {
+            $DeveloperMode = $DeveloperModeProperty.Value
+        }
+    }
     if ($DeveloperMode -ne 1) {
         throw 'Windows Developer Mode is required. Enable it in Settings > System > For developers.'
     }
 
-    $PythonExe = (& py -3.10 -c 'import sys; assert sys.maxsize > 2**32; print(sys.executable)').Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $PythonExe) {
-        throw 'Python 3.10 x64 and the py launcher are required.'
+    $PythonExe = Get-SupportedPythonExe
+    if ($null -eq $PythonExe) {
+        throw 'Python 3.10-3.14 x64 is required.'
     }
-    $PythonScripts = (& py -3.10 -c 'import sysconfig; print(sysconfig.get_path("scripts"))').Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $PythonScripts) {
-        throw 'Could not locate the Python 3.10 Scripts directory.'
-    }
+    $PythonScripts = Invoke-CheckedOutputCommand 'Could not locate the selected Python Scripts directory.' $PythonExe @('-c', 'import sysconfig; print(sysconfig.get_path(chr(115)+chr(99)+chr(114)+chr(105)+chr(112)+chr(116)+chr(115)))')
 
-    Invoke-CheckedCommand 'Install uv 0.11.23' 'py' @('-3.10', '-m', 'pip', 'install', '--disable-pip-version-check', 'uv==0.11.23')
+    Invoke-CheckedCommand 'Install uv 0.11.23' $PythonExe @('-m', 'pip', 'install', '--disable-pip-version-check', 'uv==0.11.23')
     $env:PATH = "$PythonScripts;$env:PATH"
     Invoke-CheckedCommand 'Verify uv' 'uv' @('--version')
 
@@ -205,7 +286,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $TemplateRoot 'start.ps1') -Destination (Join-Path $ReleaseRoot 'start.ps1')
     Copy-Item -LiteralPath (Join-Path $TemplateRoot 'README-WINDOWS.zh.md') -Destination (Join-Path $ReleaseRoot 'README-WINDOWS.md')
 
-    $Commit = (& git rev-parse HEAD).Trim()
+    $Commit = Invoke-CheckedOutputCommand 'Could not resolve the current Git commit.' 'git' @('rev-parse', 'HEAD')
     $BuildTime = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     @(
         "Release: $ReleaseName"
