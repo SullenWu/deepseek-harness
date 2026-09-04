@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "productCode": "kexiaomi",
+  "mainConnectionName": "MainReadOnly",
+  "connections": [
+    {
+      "name": "MainReadOnly",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=snapshot_fixture;User Id=readonly;Password=test-only;"
+    }
+  ],
+  "tenantRoutes": [],
+  "financeFallback": null,
+  "executionPolicy": {
+    "readOnly": true,
+    "commandTimeoutSeconds": 5,
+    "maxRows": 20,
+    "maxFields": 16,
+    "maxJoins": 4,
+    "maxSerializedCharacters": 12000
+  }
+}

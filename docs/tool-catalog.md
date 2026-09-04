@@ -15,6 +15,7 @@ This table connects model-visible tool names to the plugin package and service s
 
 | Tool package | Model-visible names | Requires | Writes / affects | Shipped aliases | Deployment note |
 | --- | --- | --- | --- | --- | --- |
+| `@deepseek-ai/dsh-customer-service-database` | `query_business_data`, `search_business_schema` | `ctx.tools`, `reviewed product skill catalog`, `server-local read-only MySQL configuration` | `tool/call`, `tool/result`, `read-only MySQL transaction at execution time` | - | The customer-service profile mounts this pair only under Database mode. The model searches reviewed schema and authors a structured plan; transport-owned identity scope, parameterized SQL compilation, connection selection, and execution remain inside the plugin. |
 | `@deepseek-ai/dsh-tool-ask-user` | `ask_user_question` | `ctx.tools`, `ctx.userQuestions` | `tool/call`, `tool/result after a UI/provider answers the question` | - | ask_user_question pauses the tool call until the active UI provider returns a human answer. |
 | `@deepseek-ai/dsh-tools` | `run_code` | `ctx.tools`, `ctx.codeRuntime (execution time)`, `ctx.systemPrompt` | `tool/call`, `one tool/code-dispatch-start + tool/code-dispatch pair per bridged sub-call`, `tool/result` | - | Owned by the tool registry as a reserved transport outside filterable capability layers under `mode: ptc` / `mode: both` (see the PTC mode Agent Note). Under `ptc` it is the registry's only wire contribution; the other visible capabilities are declared in a generated SDK section in the loaded runtime's language, and a program calls them through bindings scheduled under the native concurrency contract (submission-ordered starts and policy; concurrency-safe bodies overlap up to `maxParallelSubCalls`) that re-enter the complete guarded tool pipeline and link each nested execution to this outer result. |
 | `@deepseek-ai/dsh-plan-mode` | `exit_plan_mode` | `ctx.tools`, `ctx.systemPrompt`, `ctx.userQuestions (execution time, opportunistic)` | `tool/call`, `plan/mode inactive on an approved review`, `tool/result` | - | exit_plan_mode stays in the model-facing schema while planning is inactive so transitions add no tool-catalog churn on top of the plan-policy change. Its execute path rejects calls outside plan mode; in plan mode it presents the plan over the user-questions seam (approve / keep planning with feedback), and approval logs plan mode inactive at the step boundary. |
@@ -40,6 +41,252 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`, `web_search` | `ctx.tools`, `ctx.web`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | web_search and web_fetch keep provider selection behind ctx.web so model-visible schemas stay stable across backend swaps. |
+
+<a id="deepseek-aidsh-customer-service-database"></a>
+
+## `@deepseek-ai/dsh-customer-service-database`
+
+### `query_business_data`
+
+Execute one structured, parameterized, read-only SELECT using only tables, fields, usages, and joins returned by search_business_schema. Never submit SQL, database names, StoreId, TenantId, UID, a phone number, or another identity value; server-owned scope and supported value sources are injected after live authorization.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "dataSource": {
+      "type": "string",
+      "enum": [
+        "main",
+        "finance"
+      ]
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name returned by search_business_schema."
+        },
+        "alias": {
+          "type": "string",
+          "description": "Query-local SQL-safe alias."
+        }
+      },
+      "required": [
+        "table",
+        "alias"
+      ]
+    },
+    "select": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tableAlias": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string",
+            "description": "Catalog field, or * for an authorized count."
+          },
+          "outputName": {
+            "type": "string",
+            "description": "SQL-safe business result key."
+          },
+          "aggregate": {
+            "type": "string",
+            "enum": [
+              "count",
+              "sum",
+              "min",
+              "max"
+            ]
+          }
+        },
+        "required": [
+          "tableAlias",
+          "column",
+          "outputName"
+        ]
+      }
+    },
+    "joins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "inner",
+              "left"
+            ]
+          },
+          "table": {
+            "type": "string"
+          },
+          "alias": {
+            "type": "string"
+          },
+          "leftAlias": {
+            "type": "string"
+          },
+          "leftColumn": {
+            "type": "string"
+          },
+          "rightAlias": {
+            "type": "string"
+          },
+          "rightColumn": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "table",
+          "alias",
+          "leftAlias",
+          "leftColumn",
+          "rightAlias",
+          "rightColumn"
+        ]
+      }
+    },
+    "filters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tableAlias": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string",
+            "enum": [
+              "eq",
+              "neq",
+              "gt",
+              "gte",
+              "lt",
+              "lte",
+              "contains",
+              "prefix",
+              "in",
+              "is-null",
+              "is-not-null"
+            ]
+          },
+          "valueSource": {
+            "type": "string",
+            "enum": [
+              "literal",
+              "member-mobile",
+              "operator-uid",
+              "unclaimed-member",
+              "store-today",
+              "store-now"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "Only for a single literal value."
+          },
+          "values": {
+            "type": "array",
+            "description": "Only for in + literal.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "tableAlias",
+          "column",
+          "operator"
+        ]
+      }
+    },
+    "orderBy": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tableAlias": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ]
+          }
+        },
+        "required": [
+          "tableAlias",
+          "column",
+          "direction"
+        ]
+      }
+    },
+    "limit": {
+      "type": "integer"
+    },
+    "distinct": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "dataSource",
+    "root",
+    "select"
+  ]
+}
+```
+
+Source: [`packages/database/customer-service-database/src/index.ts`](../packages/database/customer-service-database/src/index.ts)
+
+### `search_business_schema`
+
+Search the reviewed customer-service database catalog before composing a query. This returns schema policy, not live customer facts. Choose search terms from the unresolved business question; no fixed question-to-table routing is applied.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Whitespace-separated business, table, or field terms."
+    },
+    "dataSource": {
+      "type": "string",
+      "description": "Optional logical source filter.",
+      "enum": [
+        "main",
+        "finance"
+      ]
+    }
+  },
+  "required": [
+    "query"
+  ]
+}
+```
+
+Source: [`packages/database/customer-service-database/src/index.ts`](../packages/database/customer-service-database/src/index.ts)
+
+The customer-service profile mounts this pair only under Database mode. The model searches reviewed schema and authors a structured plan; transport-owned identity scope, parameterized SQL compilation, connection selection, and execution remain inside the plugin.
 
 <a id="deepseek-aidsh-tool-ask-user"></a>
 

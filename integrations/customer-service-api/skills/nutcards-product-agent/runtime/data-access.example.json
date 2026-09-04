@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "productCode": "nutcards",
+  "mainConnectionName": "LinkFitDataOnlyRead",
+  "connections": [
+    {
+      "name": "LinkFitDataOnlyRead",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutcards;User Id=duckai_readonly;Password=replace-me;SslMode=Required;"
+    }
+  ],
+  "tenantRoutes": [],
+  "financeFallback": null,
+  "executionPolicy": {
+    "readOnly": true,
+    "commandTimeoutSeconds": 5,
+    "maxRows": 20,
+    "maxFields": 16,
+    "maxJoins": 4,
+    "maxSerializedCharacters": 12000
+  }
+}

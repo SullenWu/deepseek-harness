@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-This integration exposes one DeepSeek Harness turn through `POST /v1/customer-service/run`. The caller transports enterprise-chat messages, context, images, and MCP headers. Harness owns skill loading, retrieval, MCP selection and calls, evidence interpretation, follow-up questions, answers, and handoff decisions.
+This integration exposes one DeepSeek Harness turn through `POST /v1/customer-service/run`. The caller transports enterprise-chat messages, context, images, and optional API-MCP headers. Harness owns skill loading, retrieval, business-data tool selection and calls, evidence interpretation, follow-up questions, answers, and handoff decisions.
 
 The service uses the Python SDK to start the supported `dsh --profile sdk` runtime with [`customer-service.cordis.patch.yml`](customer-service.cordis.patch.yml). Each HTTP request owns one runtime process so its MCP headers cannot leak into another request. The service serializes runs because all processes share one Harness home and durable session store; reusing `conversationId` continues that Harness session.
 
@@ -15,7 +15,7 @@ cp integrations/customer-service-api/customer-service.model.example.json \
   integrations/customer-service-api/customer-service.model.json
 ```
 
-The JSON file owns the complete model selection used by this integration:
+The JSON file owns the complete model and business-data source settings used by this integration:
 
 | Field | Purpose |
 | --- | --- |
@@ -24,13 +24,18 @@ The JSON file owns the complete model selection used by this integration:
 | `displayName` | Human-readable model name in the adapter catalog. |
 | `baseUrl` | Qwen OpenAI-compatible endpoint. |
 | `apiKey` | Server-local model credential. The real file is ignored by Git. |
+| `businessDataMode` | Exactly one business-data source: `Database` or `ApiMcp`. |
+| `apiMcpUrl` | Streamable HTTP endpoint used in `ApiMcp` mode. |
+| `apiMcpToolCallTimeoutMilliseconds` | Timeout for one API-MCP tool call, from 1,000 through 300,000 milliseconds. |
+| `apiMcpFailOnStartupError` | Whether API-MCP connection failure prevents the Harness runtime from starting. |
+| `databaseMaxCatalogTables` | Maximum table summaries returned by one Database schema search, from 1 through 20. |
 | `contextWindow` | Declared model context window. |
 | `maxOutputTokens` | Declared maximum model output. |
 | `reasoningEffort` | Per-run reasoning effort: `low`, `medium`, `high`, or `null`. |
 | `requestMaxTokens` | Root-agent output cap for one customer-service request, or `null`. |
 | `timeoutMilliseconds` | Provider request timeout. |
 
-The service rejects missing, unknown, empty, unsupported, or non-positive model values during startup. It never returns the API key in an HTTP response or object representation.
+The service rejects missing, unknown, empty, unsupported, or non-positive configuration values during startup. It never returns the API key in an HTTP response or object representation.
 
 Set these infrastructure environment variables before starting the service:
 
@@ -39,7 +44,6 @@ Set these infrastructure environment variables before starting the service:
 | `DCS_DSH_HOME` | Isolated Harness home containing profiles and durable sessions. Required. |
 | `DCS_SKILL_DIR` | Directory whose direct children are product skill bundles containing `SKILL.md`. Required. |
 | `DCS_WORKSPACE` | Workspace available to the read-only file tools. Defaults to `DCS_SKILL_DIR`. |
-| `DCS_MCP_URL` | Streamable HTTP endpoint for the customer-service MCP server. Defaults to `http://127.0.0.1:5301/mcp`. |
 | `DCS_MODEL_CONFIG_FILE` | Optional model JSON path. Defaults to `customer-service.model.json` beside the server. |
 | `DCS_DSH_BIN` | `dsh` executable. Source checkouts default to `apps/cli/lib/bin.js`. |
 | `DCS_NODE_BIN_DIR` | Optional Node.js bin directory prepended to `PATH` when the `dsh` executable uses a Node shebang. |
@@ -52,6 +56,12 @@ PYTHONPATH=python/sdk/src python integrations/customer-service-api/server.py
 ```
 
 `GET /health/live` checks the HTTP process. It does not call the model or MCP server.
+
+### Choose one business-data source
+
+Set `businessDataMode` and its related source settings in `customer-service.model.json`. `ApiMcp` uses `apiMcpUrl`, `apiMcpToolCallTimeoutMilliseconds`, and `apiMcpFailOnStartupError`, and mounts only `search_capabilities` and `invoke_capability`. `Database` uses `databaseMaxCatalogTables`, and mounts only `search_business_schema` and `query_business_data`. The profile never publishes both pairs and never falls back from one source to the other inside a request.
+
+Database mode loads the selected product skill's ignored `runtime/data-access.local.json`; copy its tracked `data-access.example.json`, fill only read-only MySQL accounts, and keep the local file outside Git. Each request must carry `context.storeId`, `context.operatorUid`, and `context.merchantProfileVerified=true`. The database plugin revalidates the current operator/store relationship before every structured query and resolves TenantId from that live row. The model cannot submit SQL, database names, connection names, StoreId, TenantId, UID, or a phone number as tool arguments.
 
 ## Build a Windows deployment bundle
 
@@ -84,7 +94,8 @@ The caller sends transport facts; it does not send an intended tool, answer, or 
   "entryPoint": "merchant",
   "context": {
     "storeId": 12,
-    "operatorUid": 34
+    "operatorUid": 34,
+    "merchantProfileVerified": true
   },
   "mcp": {
     "callerId": "duckai",
@@ -109,6 +120,10 @@ Harness returns one decision. The transport caller sends `replyText` for `answer
   "finishReason": "completed"
 }
 ```
+
+Before building model input, the adapter replaces recognized member mobile numbers in the current message and channel context with `[已提供会员手机号]`. The unredacted current-message value is available only to the trusted data provider for request-local binding; it is not written into model-visible session history. The final model payload must contain exactly `action`, `replyText`, and `reason`; missing or additional fields reject the run instead of being silently discarded.
+
+The persistent conversation supplies context, not durable tool authority. Every HTTP request starts a new runtime and receives a new tool generation. In API-MCP mode, the model must search in the current request before the candidate-bound invoke tool exists; tool names, references, tokens, and results from prior requests do not authorize a current call. Current private facts require a successful request-local observation that binds the claimed object, property, value, and applicable scope or time. An unrelated or unfiltered record cannot establish identity, uniqueness, or absence.
 
 The SDK accepts inline PNG, JPEG, WebP, and GIF images. This integration rejects other attachment types instead of summarizing them outside Harness.
 
@@ -141,7 +156,8 @@ removal of `DCS_DSH_HOME`.
 
 ## Current limitations
 
-- The listener has no authentication or TLS. Bind it to loopback or a test network while proving the functional flow.
+- The listener has no authentication or TLS. When binding either data mode to a non-loopback address, put the service behind network access control and a TLS/authentication gateway.
 - Runs are serialized and start one Harness runtime process per request. This favors request isolation over latency for the first functional deployment.
 - The SDK protocol accepts raster images but not PDF, audio, or video prompt blocks.
 - `health/live` proves only that the HTTP process is listening. A real run is required to verify the model, skill directory, and MCP endpoint.
+- Database mode has not completed a production-database acceptance run in this checkout; local tests cover catalog validation and SQL compilation without using credentials.

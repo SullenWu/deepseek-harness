@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "productCode": "kexiaomi",
+  "mainConnectionName": "LinkFitDataOnlyRead",
+  "connections": [
+    {
+      "name": "LinkFitDataOnlyRead",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData0",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption0;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData1",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption1;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData2",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption2;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData3",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption3;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData4",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption4;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData5",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption5;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData6",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption6;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData7",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption7;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData8",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption8;User Id=replace_me;Password=replace_me;"
+    },
+    {
+      "name": "TenantData9",
+      "providerName": "MySql",
+      "connectionString": "Server=127.0.0.1;Database=nutbooking_consumption9;User Id=replace_me;Password=replace_me;"
+    }
+  ],
+  "tenantRoutes": [
+    {
+      "tenantId": 0,
+      "minTenantId": 0,
+      "maxTenantId": 10100000,
+      "connectionName": "TenantData"
+    }
+  ],
+  "financeFallback": {
+    "modulo": 10,
+    "connectionNameTemplate": "TenantData{index}"
+  },
+  "executionPolicy": {
+    "readOnly": true,
+    "commandTimeoutSeconds": 5,
+    "maxRows": 20,
+    "maxFields": 16,
+    "maxJoins": 4,
+    "maxSerializedCharacters": 12000
+  }
+}

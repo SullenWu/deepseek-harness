@@ -7,6 +7,7 @@ import base64
 import binascii
 import json
 import os
+import re
 import sys
 import threading
 import uuid
@@ -32,6 +33,9 @@ SUPPORTED_IMAGE_MIME_TYPES = {
     "image/gif",
 }
 ALLOWED_ACTIONS = {"answer", "ask", "handoff"}
+BUSINESS_DATA_MODES = {"Database", "ApiMcp"}
+MEMBER_MOBILE_PATTERN = re.compile(r"(?<!\d)(1[3-9]\d{9})(?!\d)")
+MEMBER_MOBILE_PLACEHOLDER = "[已提供会员手机号]"
 
 
 class RequestError(ValueError):
@@ -47,6 +51,11 @@ class ModelConfig:
     display_name: str
     base_url: str
     api_key: str = field(repr=False)
+    business_data_mode: str
+    api_mcp_url: str
+    api_mcp_tool_call_timeout_milliseconds: int
+    api_mcp_fail_on_startup_error: bool
+    database_max_catalog_tables: int
     context_window: int
     max_output_tokens: int
     reasoning_effort: str | None
@@ -73,6 +82,11 @@ class ModelConfig:
             "displayName",
             "baseUrl",
             "apiKey",
+            "businessDataMode",
+            "apiMcpUrl",
+            "apiMcpToolCallTimeoutMilliseconds",
+            "apiMcpFailOnStartupError",
+            "databaseMaxCatalogTables",
             "contextWindow",
             "maxOutputTokens",
             "reasoningEffort",
@@ -86,6 +100,19 @@ class ModelConfig:
         provider = _model_string(payload, "provider")
         if provider != "qwen-standard-cn":
             raise RuntimeError("model config provider must be qwen-standard-cn for this profile")
+        business_data_mode = _model_string(payload, "businessDataMode")
+        if business_data_mode not in BUSINESS_DATA_MODES:
+            raise RuntimeError("model config businessDataMode must be Database or ApiMcp")
+        api_mcp_tool_call_timeout_milliseconds = _model_positive_int(
+            payload, "apiMcpToolCallTimeoutMilliseconds"
+        )
+        if not 1_000 <= api_mcp_tool_call_timeout_milliseconds <= 300_000:
+            raise RuntimeError(
+                "model config apiMcpToolCallTimeoutMilliseconds must be between 1000 and 300000"
+            )
+        database_max_catalog_tables = _model_positive_int(payload, "databaseMaxCatalogTables")
+        if database_max_catalog_tables > 20:
+            raise RuntimeError("model config databaseMaxCatalogTables must be between 1 and 20")
         reasoning_effort = payload.get("reasoningEffort", "high")
         if reasoning_effort is not None:
             reasoning_effort = _model_string(payload, "reasoningEffort")
@@ -101,6 +128,11 @@ class ModelConfig:
             display_name=_model_string(payload, "displayName"),
             base_url=_model_string(payload, "baseUrl"),
             api_key=_model_string(payload, "apiKey"),
+            business_data_mode=business_data_mode,
+            api_mcp_url=_model_string(payload, "apiMcpUrl"),
+            api_mcp_tool_call_timeout_milliseconds=api_mcp_tool_call_timeout_milliseconds,
+            api_mcp_fail_on_startup_error=_model_boolean(payload, "apiMcpFailOnStartupError"),
+            database_max_catalog_tables=database_max_catalog_tables,
             context_window=_model_positive_int(payload, "contextWindow"),
             max_output_tokens=_model_positive_int(payload, "maxOutputTokens"),
             reasoning_effort=reasoning_effort,
@@ -120,7 +152,11 @@ class ApiConfig:
     patch_file: Path
     workspace: Path
     skill_dir: Path
+    business_data_mode: str
     mcp_url: str
+    mcp_tool_call_timeout_milliseconds: int
+    mcp_fail_on_startup_error: bool
+    database_max_catalog_tables: int
     model_base_url: str
     model_api_key: str = field(repr=False)
     provider: str
@@ -149,7 +185,7 @@ class ApiConfig:
         if not workspace_text:
             raise RuntimeError("DCS_WORKSPACE or DCS_SKILL_DIR must name the Harness workspace")
 
-        # 模型地址、密钥和推理参数只归 Harness 服务自己的文件管理，DuckAI 不持有这些字段。
+        # 模型、推理参数和业务数据源只归 Harness 服务自己的文件管理，DuckAI 不持有这些配置。
         model_config_path = Path(
             os.environ.get(
                 "DCS_MODEL_CONFIG_FILE",
@@ -174,15 +210,22 @@ class ApiConfig:
         dsh_home = Path(dsh_home_text).resolve()
         dsh_home.mkdir(parents=True, exist_ok=True)
         node_bin_text = os.environ.get("DCS_NODE_BIN_DIR", "").strip()
+        host = os.environ.get("DCS_HOST", "127.0.0.1").strip() or "127.0.0.1"
         return cls(
-            host=os.environ.get("DCS_HOST", "127.0.0.1").strip() or "127.0.0.1",
+            host=host,
             port=_positive_int("DCS_PORT", 8765),
             dsh_home=dsh_home,
             dsh_bin=dsh_bin,
             patch_file=patch_file,
             workspace=workspace,
             skill_dir=skill_dir,
-            mcp_url=os.environ.get("DCS_MCP_URL", "http://127.0.0.1:5301/mcp").strip(),
+            business_data_mode=model_config.business_data_mode,
+            mcp_url=model_config.api_mcp_url,
+            mcp_tool_call_timeout_milliseconds=(
+                model_config.api_mcp_tool_call_timeout_milliseconds
+            ),
+            mcp_fail_on_startup_error=model_config.api_mcp_fail_on_startup_error,
+            database_max_catalog_tables=model_config.database_max_catalog_tables,
             model_base_url=model_config.base_url,
             model_api_key=model_config.api_key,
             provider=model_config.provider,
@@ -219,6 +262,14 @@ def _model_positive_int(payload: dict[str, Any], field_name: str) -> int:
     value = payload.get(field_name)
     if type(value) is not int or value < 1:
         raise RuntimeError(f"model config {field_name} must be a positive integer")
+    return value
+
+
+def _model_boolean(payload: dict[str, Any], field_name: str) -> bool:
+    """Return a required JSON boolean without accepting integers or strings."""
+    value = payload.get(field_name)
+    if type(value) is not bool:
+        raise RuntimeError(f"model config {field_name} must be a boolean")
     return value
 
 
@@ -282,18 +333,32 @@ def parse_request(payload: Any) -> dict[str, Any]:
     }
 
 
+def _redact_model_value(value: Any) -> Any:
+    """Remove recognized private values before they enter model-visible history."""
+    if isinstance(value, str):
+        return MEMBER_MOBILE_PATTERN.sub(MEMBER_MOBILE_PLACEHOLDER, value)
+    if type(value) is int and MEMBER_MOBILE_PATTERN.fullmatch(str(value)):
+        return MEMBER_MOBILE_PLACEHOLDER
+    if isinstance(value, list):
+        return [_redact_model_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_model_value(item) for key, item in value.items()}
+    return value
+
+
 def build_prompt_blocks(request: dict[str, Any]) -> list[dict[str, Any]]:
-    """Render transported channel facts and inline images into one Harness turn."""
-    metadata = {
+    """Render redacted channel facts and inline images into one Harness turn."""
+    metadata = _redact_model_value({
         "messageId": request["messageId"],
         "productCode": request["productCode"],
         "entryPoint": request["entryPoint"],
         "context": request["context"],
-    }
+    })
+    customer_message = _redact_model_value(request["message"])
     text = (
         "这是当前企业微信客服消息。通道元数据只提供上下文，不包含处理结论。\n"
         f"<channel_context>{json.dumps(metadata, ensure_ascii=False, separators=(',', ':'))}</channel_context>\n"
-        f"<customer_message>{request['message']}</customer_message>\n"
+        f"<customer_message>{customer_message}</customer_message>\n"
         "请完整执行客服调查，并严格按系统要求输出最终 JSON。"
     )
     blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
@@ -315,9 +380,12 @@ def parse_agent_response(raw_response: str) -> dict[str, str]:
         raise RuntimeError("Harness final response is not valid JSON") from exc
     if not isinstance(payload, dict):
         raise RuntimeError("Harness final response must be a JSON object")
+    expected_fields = {"action", "replyText", "reason"}
+    if set(payload) != expected_fields:
+        raise RuntimeError("Harness final response must contain exactly action, replyText, and reason")
     action = payload.get("action")
     reply_text = payload.get("replyText")
-    reason = payload.get("reason", "")
+    reason = payload.get("reason")
     if action not in ALLOWED_ACTIONS:
         raise RuntimeError("Harness final response action must be answer, ask, or handoff")
     if not isinstance(reply_text, str) or (action != "handoff" and not reply_text.strip()):
@@ -369,9 +437,28 @@ class CustomerServiceRuntime:
 
     def _runtime_environment(self, request: dict[str, Any], trace_id: str) -> dict[str, str]:
         mcp = request["mcp"]
+        context = request.get("context", {})
+        member_mobile_match = MEMBER_MOBILE_PATTERN.search(request.get("message", ""))
         environment = {
             "DCS_SKILL_DIR": str(self._config.skill_dir),
+            "DCS_BUSINESS_DATA_MODE": self._config.business_data_mode,
+            "DCS_DATABASE_PRODUCT_CODE": request["productCode"],
+            "DCS_DATABASE_STORE_ID": str(context.get("storeId", "")),
+            "DCS_DATABASE_OPERATOR_UID": str(context.get("operatorUid", "")),
+            "DCS_DATABASE_MERCHANT_VERIFIED": (
+                "true" if context.get("merchantProfileVerified") is True else "false"
+            ),
+            "DCS_DATABASE_MEMBER_MOBILE": (
+                member_mobile_match.group(1) if member_mobile_match is not None else ""
+            ),
             "DCS_MCP_URL": self._config.mcp_url,
+            "DCS_MCP_TOOL_CALL_TIMEOUT_MILLISECONDS": str(
+                self._config.mcp_tool_call_timeout_milliseconds
+            ),
+            "DCS_MCP_FAIL_ON_STARTUP_ERROR": (
+                "true" if self._config.mcp_fail_on_startup_error else "false"
+            ),
+            "DCS_DATABASE_MAX_CATALOG_TABLES": str(self._config.database_max_catalog_tables),
             "DCS_MODEL_BASE_URL": self._config.model_base_url,
             "DCS_MODEL_ID": self._config.model,
             "DCS_MODEL_DISPLAY_NAME": self._config.model_display_name,

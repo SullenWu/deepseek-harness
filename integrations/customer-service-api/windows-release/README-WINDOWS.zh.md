@@ -46,9 +46,10 @@ dist-customer-service-windows\deepseek-harness-customer-service-<版本号>-win-
    powershell -ExecutionPolicy Bypass -File .\install.ps1
    ```
 
-4. 编辑 `integrations\customer-service-api\customer-service.model.json`，填写模型地址、模型名和 API Key。
+4. 编辑 `integrations\customer-service-api\customer-service.model.json`，填写模型地址、模型名、API Key 和业务数据源设置。
 5. 将产品技能完整放入 `skills`，需要只读访问的资料放入 `workspace`。
-6. 启动服务：
+6. 在 `customer-service.model.json` 中设置 `businessDataMode`：使用 API-MCP 时填写 `ApiMcp`，并按需设置 `apiMcpUrl`、`apiMcpToolCallTimeoutMilliseconds` 和 `apiMcpFailOnStartupError`；直连只读 MySQL 时填写 `Database`，并按需设置 `databaseMaxCatalogTables`。Database 模式还要把对应 skill 的 `runtime\data-access.example.json` 复制为 Git 忽略的 `data-access.local.json` 后填写只读账号。
+7. 启动服务：
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\start.ps1

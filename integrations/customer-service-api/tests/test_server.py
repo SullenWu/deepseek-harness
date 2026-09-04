@@ -20,8 +20,8 @@ sys.modules[SPEC.name] = SERVER
 SPEC.loader.exec_module(SERVER)
 
 
-def test_customer_service_profile_mounts_time_and_host_owned_capability_broker() -> None:
-    """Keep relative dates and trusted MCP invocation state in the shipped profile."""
+def test_customer_service_profile_mounts_time_and_mutually_exclusive_data_sources() -> None:
+    """Keep relative dates and publish only the selected business-data tool pair."""
     patch = PATCH_PATH.read_text(encoding="utf-8")
 
     assert "name: '@deepseek-ai/dsh-time-context'" in patch
@@ -30,6 +30,15 @@ def test_customer_service_profile_mounts_time_and_host_owned_capability_broker()
     assert "capabilityBroker:" in patch
     assert "searchToolName: search_capabilities" in patch
     assert "invokeToolName: invoke_capability" in patch
+    assert "name: '@deepseek-ai/dsh-customer-service-database'" in patch
+    assert "process.env.DCS_BUSINESS_DATA_MODE !== 'ApiMcp'" in patch
+    assert "process.env.DCS_BUSINESS_DATA_MODE !== 'Database'" in patch
+    assert "不得按固定问法、关键词、页面、表、接口或答案编排分支" in patch
+    assert "实时结论必须由本轮成功观察明确绑定对象、属性、值、适用范围或时间" in patch
+    assert "失败调用不得原样重复" in patch
+    assert "Number(process.env.DCS_MCP_TOOL_CALL_TIMEOUT_MILLISECONDS)" in patch
+    assert "process.env.DCS_MCP_FAIL_ON_STARTUP_ERROR === 'true'" in patch
+    assert "Number(process.env.DCS_DATABASE_MAX_CATALOG_TABLES)" in patch
 
 
 def valid_model_config() -> dict[str, object]:
@@ -40,6 +49,11 @@ def valid_model_config() -> dict[str, object]:
         "displayName": "Qwen 3.8 Max",
         "baseUrl": "https://model.example.test/v1",
         "apiKey": "test-only-key",
+        "businessDataMode": "ApiMcp",
+        "apiMcpUrl": "http://mcp.example.test/mcp",
+        "apiMcpToolCallTimeoutMilliseconds": 45000,
+        "apiMcpFailOnStartupError": False,
+        "databaseMaxCatalogTables": 6,
         "contextWindow": 131072,
         "maxOutputTokens": 16384,
         "reasoningEffort": "high",
@@ -56,9 +70,97 @@ def test_model_config_loads_all_runtime_model_settings(tmp_path: Path) -> None:
 
     assert config.provider == "qwen-standard-cn"
     assert config.model == "qwen3.8-max"
+    assert config.business_data_mode == "ApiMcp"
+    assert config.api_mcp_url == "http://mcp.example.test/mcp"
+    assert config.api_mcp_tool_call_timeout_milliseconds == 45000
+    assert config.api_mcp_fail_on_startup_error is False
+    assert config.database_max_catalog_tables == 6
     assert config.reasoning_effort == "high"
     assert config.request_max_tokens == 8192
     assert "test-only-key" not in repr(config)
+
+
+def test_api_config_rejects_unknown_business_data_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_path = tmp_path / "customer-service.model.json"
+    payload = valid_model_config()
+    payload["businessDataMode"] = "Both"
+    model_path.write_text(json.dumps(payload), encoding="utf-8")
+    skill_dir = tmp_path / "skills"
+    skill_dir.mkdir()
+    monkeypatch.setenv("DCS_DSH_HOME", str(tmp_path / "dsh-home"))
+    monkeypatch.setenv("DCS_DSH_BIN", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_PATCH_FILE", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_SKILL_DIR", str(skill_dir))
+    monkeypatch.setenv("DCS_MODEL_CONFIG_FILE", str(model_path))
+
+    with pytest.raises(RuntimeError, match="businessDataMode must be Database or ApiMcp"):
+        SERVER.ApiConfig.from_environment()
+
+
+def test_api_config_allows_non_loopback_database_listener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_path = tmp_path / "customer-service.model.json"
+    payload = valid_model_config()
+    payload["businessDataMode"] = "Database"
+    model_path.write_text(json.dumps(payload), encoding="utf-8")
+    skill_dir = tmp_path / "skills"
+    skill_dir.mkdir()
+    monkeypatch.setenv("DCS_DSH_HOME", str(tmp_path / "dsh-home"))
+    monkeypatch.setenv("DCS_DSH_BIN", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_PATCH_FILE", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_SKILL_DIR", str(skill_dir))
+    monkeypatch.setenv("DCS_MODEL_CONFIG_FILE", str(model_path))
+    monkeypatch.setenv("DCS_BUSINESS_DATA_MODE", "ApiMcp")
+    monkeypatch.setenv("DCS_HOST", "0.0.0.0")
+
+    config = SERVER.ApiConfig.from_environment()
+
+    assert config.host == "0.0.0.0"
+    assert config.business_data_mode == "Database"
+
+
+def test_database_mode_injects_trusted_scope_and_current_message_mobile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_path = tmp_path / "customer-service.model.json"
+    payload = valid_model_config()
+    payload["businessDataMode"] = "Database"
+    model_path.write_text(json.dumps(payload), encoding="utf-8")
+    skill_dir = tmp_path / "skills"
+    skill_dir.mkdir()
+    monkeypatch.setenv("DCS_DSH_HOME", str(tmp_path / "dsh-home"))
+    monkeypatch.setenv("DCS_DSH_BIN", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_PATCH_FILE", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_SKILL_DIR", str(skill_dir))
+    monkeypatch.setenv("DCS_MODEL_CONFIG_FILE", str(model_path))
+    config = SERVER.ApiConfig.from_environment()
+
+    environment = SERVER.CustomerServiceRuntime(config)._runtime_environment(
+        {
+            "conversationId": "conversation-1",
+            "productCode": "kxm_pc",
+            "message": "会员手机号是 13800138000，请帮我查卡",
+            "context": {
+                "storeId": 12,
+                "operatorUid": 34,
+                "merchantProfileVerified": True,
+            },
+            "mcp": {},
+        },
+        "dcs_trace1",
+    )
+
+    assert environment["DCS_BUSINESS_DATA_MODE"] == "Database"
+    assert environment["DCS_DATABASE_STORE_ID"] == "12"
+    assert environment["DCS_DATABASE_OPERATOR_UID"] == "34"
+    assert environment["DCS_DATABASE_MERCHANT_VERIFIED"] == "true"
+    assert environment["DCS_DATABASE_MEMBER_MOBILE"] == "13800138000"
 
 
 @pytest.mark.parametrize(
@@ -67,6 +169,9 @@ def test_model_config_loads_all_runtime_model_settings(tmp_path: Path) -> None:
         ({"apiKey": ""}, "apiKey must be a non-empty string"),
         ({"unexpectedSetting": True}, "unknown keys"),
         ({"provider": "another-provider"}, "must be qwen-standard-cn"),
+        ({"apiMcpToolCallTimeoutMilliseconds": 999}, "must be between 1000 and 300000"),
+        ({"apiMcpFailOnStartupError": "false"}, "must be a boolean"),
+        ({"databaseMaxCatalogTables": 21}, "must be between 1 and 20"),
     ],
 )
 def test_model_config_rejects_unsafe_or_unsupported_values(
@@ -97,8 +202,10 @@ def test_api_config_injects_file_owned_model_values_into_runtime(
     monkeypatch.setenv("DCS_SKILL_DIR", str(skill_dir))
     monkeypatch.setenv("DCS_WORKSPACE", str(skill_dir))
     monkeypatch.setenv("DCS_MODEL_CONFIG_FILE", str(model_path))
+    monkeypatch.setenv("DCS_MCP_URL", "http://legacy-env.example.test/mcp")
 
     config = SERVER.ApiConfig.from_environment()
+    assert config.business_data_mode == "ApiMcp"
     environment = SERVER.CustomerServiceRuntime(config)._runtime_environment(
         {
             "conversationId": "conversation-1",
@@ -109,9 +216,14 @@ def test_api_config_injects_file_owned_model_values_into_runtime(
     )
 
     assert config.model == "qwen3.8-max"
+    assert config.mcp_url == "http://mcp.example.test/mcp"
     assert environment["DCS_MODEL_ID"] == "qwen3.8-max"
     assert environment["DCS_MODEL_CONTEXT_WINDOW"] == "131072"
     assert environment["DASHSCOPE_API_KEY"] == "test-only-key"
+    assert environment["DCS_MCP_URL"] == "http://mcp.example.test/mcp"
+    assert environment["DCS_MCP_TOOL_CALL_TIMEOUT_MILLISECONDS"] == "45000"
+    assert environment["DCS_MCP_FAIL_ON_STARTUP_ERROR"] == "false"
+    assert environment["DCS_DATABASE_MAX_CATALOG_TABLES"] == "6"
     assert "test-only-key" not in repr(config)
 
 
@@ -138,6 +250,29 @@ def test_parse_request_preserves_transport_fields_and_image() -> None:
     assert request["message"] == "会员卡为什么看不到？"
     assert request["context"] == {"storeId": 12}
     assert request["attachments"][0]["mimeType"] == "image/png"
+
+
+def test_build_prompt_blocks_redacts_mobile_from_message_and_context() -> None:
+    request = SERVER.parse_request(
+        {
+            "conversationId": "conversation-1",
+            "messageId": "message-1",
+            "message": "会员手机号是 13800138000，请帮我确认",
+            "productCode": "kxm_pc",
+            "context": {
+                "contact": "13800138001",
+                "numericContact": 13800138002,
+            },
+        }
+    )
+
+    prompt = SERVER.build_prompt_blocks(request)[0]["text"]
+
+    assert "13800138000" not in prompt
+    assert "13800138001" not in prompt
+    assert "13800138002" not in prompt
+    assert prompt.count("[已提供会员手机号]") == 3
+    assert request["message"] == "会员手机号是 13800138000，请帮我确认"
 
 
 def test_parse_request_rejects_non_image_attachment() -> None:
@@ -171,3 +306,15 @@ def test_parse_agent_response_accepts_only_documented_actions(action: str) -> No
 def test_parse_agent_response_rejects_free_form_text() -> None:
     with pytest.raises(RuntimeError, match="not valid JSON"):
         SERVER.parse_agent_response("普通文本")
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        '{"action":"answer","replyText":"回复"}',
+        '{"action":"answer","replyText":"回复","reason":"","references":[]}',
+    ],
+)
+def test_parse_agent_response_requires_exact_output_fields(response: str) -> None:
+    with pytest.raises(RuntimeError, match="exactly action, replyText, and reason"):
+        SERVER.parse_agent_response(response)

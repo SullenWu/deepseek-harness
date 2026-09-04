@@ -44,6 +44,15 @@ describe('customer-service Windows release builder', () => {
     expect(template).toContain("Set-DefaultEnvironmentVariable 'DCS_DSH_BIN' $Runtime")
   })
 
+  it('prints startup configuration without exposing the model API key', async () => {
+    const template = await read('integrations/customer-service-api/windows-release/start.ps1')
+
+    expect(template).toContain("Write-Host 'Runtime configuration:'")
+    expect(template).toContain("Write-Host 'Model configuration:'")
+    expect(template).toContain("Write-ConfigurationValue 'apiKey' $ApiKeyStatus")
+    expect(template).not.toContain("Write-ConfigurationValue 'apiKey' (Get-JsonProperty")
+  })
+
   it('keeps every PowerShell file ASCII-safe for Windows PowerShell 5.1', async () => {
     for (const relativePath of [
       'scripts/build-customer-service-windows-release.ps1',

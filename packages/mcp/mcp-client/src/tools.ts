@@ -385,27 +385,28 @@ function parseCapabilitySearch(value: McpResult, rawName: string): {
   }
 }
 
-/** Convert the model's compatibility string into one object without recursive decoding. */
-function normalizeBrokerArguments(
+/** Convert one broker field's compatibility string into an object without recursive decoding. */
+function normalizeBrokerObject(
   value: unknown,
+  field: 'arguments' | 'references',
   ctx: Context,
   opts: ToolBridgeOptions,
   toolId: string,
 ): Record<string, unknown> {
   if (isUnknownRecord(value)) return value
   if (typeof value !== 'string') {
-    throw new Error('INVALID_TOOL_ARGUMENTS: arguments must be a JSON object')
+    throw new Error(`INVALID_TOOL_ARGUMENTS: ${field} must be a JSON object`)
   }
   let parsed: unknown
   try {
     parsed = JSON.parse(value)
   } catch {
-    throw new Error('INVALID_TOOL_ARGUMENTS: arguments string must contain valid JSON')
+    throw new Error(`INVALID_TOOL_ARGUMENTS: ${field} string must contain valid JSON`)
   }
   if (!isUnknownRecord(parsed)) {
-    throw new Error('INVALID_TOOL_ARGUMENTS: arguments string must contain one JSON object')
+    throw new Error(`INVALID_TOOL_ARGUMENTS: ${field} string must contain one JSON object`)
   }
-  ctx.logger.warn(`mcp-client(${opts.serverName}): normalized stringified arguments for ${toolId}`)
+  ctx.logger.warn(`mcp-client(${opts.serverName}): normalized stringified ${field} for ${toolId}`)
   return parsed
 }
 
@@ -426,16 +427,15 @@ function prepareBrokerInvocation(
   if (typeof toolId !== 'string' || !candidates.has(toolId)) {
     throw new Error('INVALID_TOOL_ARGUMENTS: toolId must name one candidate from the latest search')
   }
-  const ordinaryArguments = normalizeBrokerArguments(args.arguments, ctx, opts, toolId)
-  const references = args.references
-  if (references !== undefined && references !== null && !isUnknownRecord(references)) {
-    throw new Error('INVALID_TOOL_ARGUMENTS: references must be a JSON object when provided')
-  }
+  const ordinaryArguments = normalizeBrokerObject(args.arguments, 'arguments', ctx, opts, toolId)
+  const references = args.references === undefined || args.references === null
+    ? undefined
+    : normalizeBrokerObject(args.references, 'references', ctx, opts, toolId)
   return {
     toolId,
     capabilityToken: token,
     arguments: ordinaryArguments,
-    ...isUnknownRecord(references) ? { references } : {},
+    ...references === undefined ? {} : { references },
   }
 }
 

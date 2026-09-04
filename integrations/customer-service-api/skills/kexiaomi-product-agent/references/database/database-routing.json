@@ -1,0 +1,141 @@
+{
+  "algorithm": [
+    "优先匹配 TenantId 精确配置",
+    "其次匹配 MinTenantId <= tenantId <= MaxTenantId 的区间配置",
+    "仍未命中时使用 TenantData + (tenantId % 10)"
+  ],
+  "explicitRoutes": [
+    {
+      "connectionName": "TenantData",
+      "maxTenantId": 10100000,
+      "minTenantId": 0,
+      "tenantId": 0
+    },
+    {
+      "connectionName": "TenantData0",
+      "maxTenantId": 10200000,
+      "minTenantId": 10100001,
+      "tenantId": 0
+    },
+    {
+      "connectionName": "TenantData1",
+      "maxTenantId": 10300000,
+      "minTenantId": 10200001,
+      "tenantId": 0
+    }
+  ],
+  "fallbackConnectionNames": [
+    "TenantData0",
+    "TenantData1",
+    "TenantData2",
+    "TenantData3",
+    "TenantData4",
+    "TenantData5",
+    "TenantData6",
+    "TenantData7",
+    "TenantData8",
+    "TenantData9"
+  ],
+  "physicalTargets": [
+    {
+      "connectionAliases": [
+        "LinkFitDataOnlyRead"
+      ],
+      "roles": [
+        "main"
+      ],
+      "schema": "nutbooking"
+    },
+    {
+      "connectionAliases": [
+        "TenantData",
+        "TenantData9"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData0"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_0"
+    },
+    {
+      "connectionAliases": [
+        "TenantData1"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_1"
+    },
+    {
+      "connectionAliases": [
+        "TenantData2"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_2"
+    },
+    {
+      "connectionAliases": [
+        "TenantData3"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_3"
+    },
+    {
+      "connectionAliases": [
+        "TenantData4"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_4"
+    },
+    {
+      "connectionAliases": [
+        "TenantData5"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_5"
+    },
+    {
+      "connectionAliases": [
+        "TenantData6"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_6"
+    },
+    {
+      "connectionAliases": [
+        "TenantData7"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_7"
+    },
+    {
+      "connectionAliases": [
+        "TenantData8"
+      ],
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_8"
+    }
+  ]
+}
