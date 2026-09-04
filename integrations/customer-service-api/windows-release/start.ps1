@@ -1,34 +1,50 @@
-$ErrorActionPreference = "Stop"
+[CmdletBinding()]
+param()
 
-# 直接使用发布包自带的 Windows runtime，避免 dsh.exe 包装层提前关闭 SDK 管道。
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Python = Join-Path $Root ".venv\Scripts\python.exe"
-$Dsh = Join-Path $Root "runtime\deepseek-harness-sdk-runtime-win-x64.exe"
-$DshRg = Join-Path $Root "runtime\deepseek-harness-sdk-runtime-win-x64-rg.exe"
-$ServiceDir = Join-Path $Root "integrations\customer-service-api"
-$Server = Join-Path $ServiceDir "server.py"
-$ModelConfig = Join-Path $ServiceDir "customer-service.model.json"
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
-if (-not (Test-Path $Python) -or -not (Test-Path $Dsh) -or -not (Test-Path $DshRg)) {
-    throw "运行时尚未安装，请先执行 .\install.ps1。"
+function Set-DefaultEnvironmentVariable {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))) {
+        [Environment]::SetEnvironmentVariable($Name, $Value)
+    }
 }
-if (-not (Test-Path $ModelConfig)) {
-    throw "缺少 customer-service.model.json，请先执行 .\install.ps1 并填写模型配置。"
+
+# Use the bundled native runtime directly so no wrapper can close the SDK pipe.
+$Root = $PSScriptRoot
+$Python = Join-Path $Root '.venv\Scripts\python.exe'
+$Runtime = Join-Path $Root 'runtime\deepseek-harness-sdk-runtime-win-x64.exe'
+$RuntimeRg = Join-Path $Root 'runtime\deepseek-harness-sdk-runtime-win-x64-rg.exe'
+$ServiceDirectory = Join-Path $Root 'integrations\customer-service-api'
+$Server = Join-Path $ServiceDirectory 'server.py'
+$ModelConfig = Join-Path $ServiceDirectory 'customer-service.model.json'
+
+foreach ($RequiredFile in @($Python, $Runtime, $RuntimeRg)) {
+    if (-not (Test-Path -LiteralPath $RequiredFile -PathType Leaf)) {
+        throw 'The runtime is not installed. Run .\install.ps1 first.'
+    }
+}
+if (-not (Test-Path -LiteralPath $ModelConfig -PathType Leaf)) {
+    throw 'customer-service.model.json is missing. Run .\install.ps1 and complete the model configuration.'
 }
 
-# 只在外部没有指定时使用发布包默认值，便于运维通过系统环境变量覆盖。
-$env:DCS_DSH_HOME = if ([string]::IsNullOrWhiteSpace($env:DCS_DSH_HOME)) { Join-Path $Root "data\dsh-home" } else { $env:DCS_DSH_HOME }
-$env:DCS_SKILL_DIR = if ([string]::IsNullOrWhiteSpace($env:DCS_SKILL_DIR)) { Join-Path $Root "skills" } else { $env:DCS_SKILL_DIR }
-$env:DCS_WORKSPACE = if ([string]::IsNullOrWhiteSpace($env:DCS_WORKSPACE)) { Join-Path $Root "workspace" } else { $env:DCS_WORKSPACE }
-$env:DCS_MCP_URL = if ([string]::IsNullOrWhiteSpace($env:DCS_MCP_URL)) { "http://127.0.0.1:5301/mcp" } else { $env:DCS_MCP_URL }
-$env:DCS_HOST = if ([string]::IsNullOrWhiteSpace($env:DCS_HOST)) { "127.0.0.1" } else { $env:DCS_HOST }
-$env:DCS_PORT = if ([string]::IsNullOrWhiteSpace($env:DCS_PORT)) { "8765" } else { $env:DCS_PORT }
-$env:DCS_DSH_BIN = $Dsh
-$env:DCS_MODEL_CONFIG_FILE = $ModelConfig
+# Preserve operator-supplied environment settings and provide package defaults.
+Set-DefaultEnvironmentVariable 'DCS_DSH_HOME' (Join-Path $Root 'data\dsh-home')
+Set-DefaultEnvironmentVariable 'DCS_SKILL_DIR' (Join-Path $Root 'skills')
+Set-DefaultEnvironmentVariable 'DCS_WORKSPACE' (Join-Path $Root 'workspace')
+Set-DefaultEnvironmentVariable 'DCS_HOST' '127.0.0.1'
+Set-DefaultEnvironmentVariable 'DCS_PORT' '8765'
+Set-DefaultEnvironmentVariable 'DCS_DSH_BIN' $Runtime
+Set-DefaultEnvironmentVariable 'DCS_MODEL_CONFIG_FILE' $ModelConfig
 
-Write-Host "启动客服 API: http://$($env:DCS_HOST):$($env:DCS_PORT)" -ForegroundColor Green
-Write-Host "健康检查: http://$($env:DCS_HOST):$($env:DCS_PORT)/health/live"
+Write-Host "Starting customer-service API: http://$($env:DCS_HOST):$($env:DCS_PORT)" -ForegroundColor Green
+Write-Host "Health endpoint: http://$($env:DCS_HOST):$($env:DCS_PORT)/health/live"
 & $Python $Server
 if ($LASTEXITCODE -ne 0) {
-    throw "客服 API 进程异常退出，退出码: $LASTEXITCODE"
+    throw "The customer-service API exited with code $LASTEXITCODE."
 }

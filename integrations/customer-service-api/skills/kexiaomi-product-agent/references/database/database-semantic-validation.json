@@ -1,0 +1,8 @@
+{
+  "catalogTableRecords": 493,
+  "catalogUniqueTables": 376,
+  "enumHintCount": 770,
+  "highConfidenceRelationCount": 70,
+  "logicalRelationCount": 187,
+  "runtimeAuthorizationGranted": false
+}

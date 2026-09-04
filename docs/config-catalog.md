@@ -497,6 +497,34 @@ export interface Config {
 
 Source: [`packages/credentials/credentials-local/src/index.ts:64`](../packages/credentials/credentials-local/src/index.ts)
 
+<a id="deepseek-aidsh-customer-service-database"></a>
+
+## `@deepseek-ai/dsh-customer-service-database`
+
+Requires: `tools`
+
+```ts config-catalog
+/** Server-owned request configuration for the database tool pair. */
+export interface Config {
+  /** Absolute root containing the product skill directories. */
+  skillRoot: string
+  /** Trusted transport product code. */
+  productCode: string
+  /** Trusted current store id. */
+  storeId: number
+  /** Trusted current operator uid. */
+  operatorUid: number
+  /** Whether DuckAI already verified the merchant entry profile. */
+  merchantProfileVerified: boolean
+  /** Member mobile extracted from the current customer message, when available. */
+  memberMobile?: string
+  /** Maximum tables returned by one schema search. */
+  maxCatalogTables?: number
+}
+```
+
+Source: [`packages/database/customer-service-database/src/index.ts:20`](../packages/database/customer-service-database/src/index.ts)
+
 <a id="deepseek-aidsh-e2b"></a>
 
 ## `@deepseek-ai/dsh-e2b`

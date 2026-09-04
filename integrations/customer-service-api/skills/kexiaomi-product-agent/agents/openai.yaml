@@ -1,0 +1,6 @@
+interface:
+  display_name: "课小秘产品 Agent"
+  short_description: "课小秘售前咨询、产品讲解、竞品比较与售后排障专属能力"
+  default_prompt: "Use $kexiaomi-product-agent to answer a 课小秘 presales or after-sales question with traceable product evidence."
+policy:
+  allow_implicit_invocation: true

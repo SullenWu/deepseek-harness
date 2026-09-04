@@ -1668,7 +1668,8 @@ describe('capability broker', () => {
       { toolId: 'second', arguments: {}, capabilityToken: 'model-token' },
       { arguments: {} },
       { toolId: 'stale', arguments: {} },
-      { toolId: 'second', arguments: {}, references: 'not-an-object' },
+      { toolId: 'second', arguments: {}, references: 'null' },
+      { toolId: 'second', arguments: {}, references: '{' },
     ]
     for (const [index, argumentsValue] of invalidCalls.entries()) {
       const result = await ctx.tools.execute({
@@ -1682,24 +1683,24 @@ describe('capability broker', () => {
       expect(textAt(result.content)).toContain('INVALID_TOOL_ARGUMENTS')
     }
     const callsBeforeValidInvokes = wireCalls.length
-    for (const references of [null, { member: 'ref_1' }]) {
+    for (const references of [null, { member: 'ref_1' }, '{"member":"ref_2"}']) {
       const result = await ctx.tools.execute({
         signal: testToolSignal,
-        callId: ToolCallId(`valid-invoke-${references === null ? 'null' : 'object'}`),
+        callId: ToolCallId(`valid-invoke-${references === null ? 'null' : typeof references}`),
         name: 'mcp__srv__invoke_capability',
         arguments: { toolId: 'second', arguments: {}, references },
         agent,
       })
       expect(result.isError).toBe(false)
     }
-    expect(wireCalls).toHaveLength(callsBeforeValidInvokes + 2)
+    expect(wireCalls).toHaveLength(callsBeforeValidInvokes + 3)
     expect(wireCalls.at(-1)).toEqual({
       name: 'invoke_capability',
       arguments: {
         toolId: 'second',
         capabilityToken: 'token-2',
         arguments: {},
-        references: { member: 'ref_1' },
+        references: { member: 'ref_2' },
       },
     })
 

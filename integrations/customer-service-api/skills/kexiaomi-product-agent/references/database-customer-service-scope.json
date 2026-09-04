@@ -1,0 +1,194 @@
+{
+  "scopeVersion": 2,
+  "audience": "merchant-customer-service",
+  "defaultPolicy": "exclude-unclassified",
+  "description": "客服数据范围按商家实际使用的业务模块划分。软件订购、餐饮、商城、分销、短信和企微等平台提供给商家的能力属于商家业务；只有内部销售运营、平台埋点、凭据表和历史复制表继续排除。",
+  "groups": [
+    {
+      "name": "identity-store",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": ["store", "users"]
+    },
+    {
+      "name": "member-card",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "card_template", "card_used_time", "card_used_week", "custom_controls", "custom_user_tag",
+        "log_user_card_cancel", "log_user_card_cancel_info", "merger_card_log", "store_group",
+        "store_member_follow_up", "store_prepaid_card", "store_prepaid_card_child",
+        "store_prepaid_card_service_item", "store_tag_group", "store_user", "store_user_black_list",
+        "store_user_black_list_log", "store_user_source_way_extend", "user_card", "user_card_agreement",
+        "user_card_child", "user_card_child_liability", "user_card_operation_log", "user_card_service_item",
+        "user_card_service_item_lability", "user_group", "user_point_log", "user_recommend",
+        "user_search_condition"
+      ]
+    },
+    {
+      "name": "course-reservation",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "common_reservation_controls", "common_reservation_controls_item", "course_image", "item_class",
+        "log_lessons_notice_time", "service_item_card_item", "store_classes", "store_classes_course",
+        "store_classes_user", "store_course", "store_course_card_item", "store_course_card_relation",
+        "store_course_name", "store_course_price", "store_course_staff", "store_course_tag_relation",
+        "store_course_time", "store_course_time_detailed", "store_course_time_detailed_week", "store_lessons",
+        "store_lessons_download_set", "store_material_course_relation", "store_material_lessons_relation",
+        "store_place", "store_place_close_info", "store_place_operate_week", "store_reservation",
+        "store_reservation_controls", "store_reservation_controls_item", "store_reservation_detailed",
+        "store_reservation_note", "store_reservation_note_image", "store_reservation_seting",
+        "store_reservation_tag", "store_reservation_time_seting", "user_lessons_log"
+      ]
+    },
+    {
+      "name": "staff-permission",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "staff_cashout", "staff_cashout_log", "staff_operate", "staff_operate_time", "staff_operate_week",
+        "staff_private_lesson_set", "staff_service_item", "staff_vacation", "staff_vacation_date",
+        "staff_vacation_seting", "staff_vacation_time", "store_performance_item", "store_user_permissions",
+        "tenant_user", "tenant_user_image", "tenant_user_info", "tenant_user_tag_relation",
+        "transfer_admin_log", "user_staff_relation", "user_vacation"
+      ]
+    },
+    {
+      "name": "consumption-payment",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "business_orders", "business_trade", "consumption_combination", "consumption_file",
+        "consumption_integral_log", "consumption_log", "consumption_performance",
+        "consumption_performance_item", "consumption_performance_item_staff", "consumption_performance_log",
+        "consumption_price_log", "consumption_product", "consumption_service_item",
+        "consumption_validity_date_log", "log_store_certification", "pay_preferentia_review_log",
+        "pay_way_extend", "store_fb_config", "store_pay_account"
+      ]
+    },
+    {
+      "name": "coupon-marketing",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "activity", "activity_template", "alipay_marketing_recruit_log", "coupon", "coupon_center",
+        "coupon_link", "lottery", "lottery_coupon", "lottery_item", "lottery_log", "lottery_user",
+        "marketing_user_where", "poster_tag", "store_coupon_center", "store_integral_set", "user_coupon"
+      ]
+    },
+    {
+      "name": "store-business-configuration",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "print_config", "store_advertisement_seting", "store_agreement", "store_card", "store_controls",
+        "store_custom_seting", "store_customer_mobile", "store_experience_pay", "store_extend",
+        "store_index_config", "store_index_modules", "store_material", "store_material_category",
+        "store_media", "store_new_operating", "store_notice_remind_time_set", "store_notice_set",
+        "store_operate_time", "store_operate_week", "store_physical_card", "store_service_item",
+        "store_seting", "store_sms_notice_set", "store_vacation", "store_vacation_date",
+        "store_vacation_seting", "store_vacation_time", "store_workbench"
+      ]
+    },
+    {
+      "name": "subscription-entitlement",
+      "authority": "primary-business-source",
+      "fieldPolicy": "support-metadata-only",
+      "tables": [
+        "notice_center", "soft_order", "soft_order_buy_module_record", "soft_order_child",
+        "store_added_service_order", "store_added_services", "store_growth_activation",
+        "store_soft_discount", "store_soft_module", "store_soft_version_permission", "store_version"
+      ]
+    },
+    {
+      "name": "food-ordering",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "food", "food_cart", "food_cart_item", "food_category", "food_category_relation",
+        "food_client_info", "food_common_sku", "food_common_sku_item", "food_img", "food_order",
+        "food_order_item", "food_relation_user", "food_right_tag", "food_setting", "food_sku",
+        "food_sku_item", "food_tabel_qrcode", "food_table", "food_tag", "food_tag_relation",
+        "print_config_food_tag_relation", "rider_food_order", "store_rider"
+      ]
+    },
+    {
+      "name": "shop-commerce",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "product", "product_class", "product_class_img", "product_class_join", "product_class_sku",
+        "product_img", "product_sku", "product_sku_attr", "product_sku_attr_detail", "product_tag",
+        "service_item_cart", "service_item_category", "service_item_category_relation",
+        "service_item_order_item", "shop_order", "shop_order_product", "shopping_cart",
+        "shopping_cart_product", "sku_attr", "sku_attr_child", "store_shop_seting"
+      ]
+    },
+    {
+      "name": "alliance-distribution",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": [
+        "agency_matter", "alliance", "commission_cashout_log", "consumption_commission_log",
+        "distribution_setting", "distribution_setting_child", "log_alliance", "log_alliance_coupon",
+        "promote_users", "promoter", "store_alliance", "store_alliance_card"
+      ]
+    },
+    {
+      "name": "cloud-store",
+      "authority": "primary-business-source",
+      "fieldPolicy": "reviewed-business-fields",
+      "tables": ["cloud_store_customer_setting", "cloud_store_index_banner", "cloud_store_index_title"]
+    },
+    {
+      "name": "merchant-messaging",
+      "authority": "primary-business-source",
+      "fieldPolicy": "support-metadata-only",
+      "tables": [
+        "store_sms_send_task", "store_sms_template", "sys_message", "wechat_message_template", "wechat_reply"
+      ]
+    },
+    {
+      "name": "work-wechat",
+      "authority": "primary-business-source",
+      "fieldPolicy": "support-metadata-only",
+      "tables": [
+        "three_authorizer_info", "work_wechat_attention", "work_wechat_msg",
+        "work_wechat_msg_attachments", "work_wechat_msg_send_log", "work_wechat_msg_staff_log",
+        "work_wechat_msg_task", "work_wechat_msg_template", "work_wechat_msg_template_attachments",
+        "work_wechat_staff_code", "work_wechat_staff_code_attachments", "work_wechat_staff_code_tag",
+        "work_wechat_user_relation"
+      ]
+    },
+    {
+      "name": "merchant-support-operations",
+      "authority": "supporting-business-source",
+      "fieldPolicy": "support-metadata-only",
+      "tables": [
+        "ask_for_items", "business_receive_address", "complaint", "log_export_user_data",
+        "log_user_login", "performance_export_log"
+      ]
+    }
+  ],
+  "excludedFamilies": [
+    {
+      "name": "internal-sales-and-operations",
+      "tablePatterns": [
+        "^agent_store(?:_record)?$", "^channel_store_relation$", "^cooperation_consult$",
+        "^return_visit$", "^trial_user_record$", "^user_trial_record$",
+        "^user_track(?:_black)?$", "^store_growth_event$"
+      ]
+    },
+    {
+      "name": "credential-and-password",
+      "tablePatterns": ["^(?:card|coupon)_password$", "^store_platform_auth_token$"]
+    },
+    {
+      "name": "legacy-copy-tables",
+      "tablePatterns": [
+        "^card_template_copy$", "^store_added_services01$", "^store_sms_template_copy[12]$"
+      ]
+    }
+  ]
+}

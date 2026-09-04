@@ -1,0 +1,18 @@
+{
+  "approvedTableCount": 244,
+  "audience": "merchant-customer-service",
+  "authorizationBasis": "scoped-tables-safe-fields-and-high-confidence-repository-joins",
+  "defaultTablePolicy": "exclude-unclassified",
+  "explicitlyExcludedTableCount": 17,
+  "fieldCount": 2328,
+  "generatedAtUtc": "2026-09-01T10:21:38+00:00",
+  "maxRows": 20,
+  "policyVersion": 2,
+  "rawSqlAccepted": false,
+  "relationCount": 40,
+  "runtimeAuthorizationGranted": true,
+  "scopeInjectedByServer": true,
+  "scopeVersion": 2,
+  "tableCount": 244,
+  "unclassifiedExcludedTableCount": 3
+}

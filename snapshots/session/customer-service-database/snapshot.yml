@@ -1,0 +1,10 @@
+version: 1
+scenario: customer-service-database
+profile: headless
+composition: customer-service-database
+recording: authored
+header:
+  class: customer-service-database
+  pin: true
+replay:
+  override: true

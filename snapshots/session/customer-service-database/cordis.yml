@@ -1,0 +1,11 @@
+# Add the request-scoped customer-service database tools to the shipped profile.
+- insert:
+    - id: customer-service-database
+      name: '@deepseek-ai/dsh-customer-service-database'
+      config:
+        skillRoot: !!js "decodeURIComponent(new URL('./skills/', 'file://' + process.env.DSH_SNAPSHOT_FILE).pathname)"
+        productCode: kxm_pc
+        storeId: 12
+        operatorUid: 34
+        merchantProfileVerified: true
+        maxCatalogTables: 8

@@ -19,6 +19,7 @@
 
 | 工具包 | 模型可见名称 | 依赖 | 写入／影响 | 随产品发布的别名 | 部署说明 |
 | --- | --- | --- | --- | --- | --- |
+| `@deepseek-ai/dsh-customer-service-database` | `query_business_data`、`search_business_schema` | `ctx.tools`、`reviewed product skill catalog`、`server-local read-only MySQL configuration` | `tool/call`、`tool/result`、`read-only MySQL transaction at execution time` | - | 客服 profile 只在 Database 模式挂载这组工具。模型搜索经审核的结构并编写结构化计划；传输层拥有的身份范围、参数化 SQL 编译、连接选择与执行都留在插件内部。 |
 | `@deepseek-ai/dsh-tool-ask-user` | `ask_user_question` | `ctx.tools`、`ctx.userQuestions` | `tool/call`、`tool/result after a UI/provider answers the question` | - | ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类答案。 |
 | `@deepseek-ai/dsh-tools` | `run_code` | `ctx.tools`、`ctx.codeRuntime (execution time)`、`ctx.systemPrompt` | `tool/call`、`one tool/code-dispatch-start + tool/code-dispatch pair per bridged sub-call`、`tool/result` | - | 在 `mode: ptc`／`mode: both` 下，它由工具注册表所有，作为可过滤能力层之外的保留传输机制（参见 PTC mode Agent Note）。在 `ptc` 下，它是注册表对协议格式（wire format）的唯一贡献；其他可见能力在使用已加载运行时语言生成的 SDK 章节中声明。程序通过 binding 调用这些能力，调用按照原生并发约定调度：启动顺序和策略遵循提交顺序，并发安全的函数体最多重叠执行 `maxParallelSubCalls` 个。调用会重新进入完整且受守卫保护的工具流水线，并将每个嵌套执行关联到此外层结果。 |
 | `@deepseek-ai/dsh-plan-mode` | `exit_plan_mode` | `ctx.tools`、`ctx.systemPrompt`、`ctx.userQuestions (execution time, opportunistic)` | `tool/call`、`plan/mode inactive on an approved review`、`tool/result` | - | 规划未激活时，exit_plan_mode 仍保留在面向模型的 schema 中，这样状态转换不会在规划策略变更之外额外造成工具目录变动。其执行路径会拒绝规划模式之外的调用；在规划模式下，它通过用户交互 seam 提交计划（批准／根据反馈继续规划），批准后会在步骤边界记录规划模式已停用。 |
@@ -44,6 +45,252 @@
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`、`owning Agent session` | `tool/call`、`todo/write`、`tool/result` | - | todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。 |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`、`web_search` | `ctx.tools`、`ctx.web`、`ctx.systemPrompt` | `tool/call`、`tool/result` | - | web_search 和 web_fetch 将提供方选择置于 ctx.web 之后，使模型可见 schema 在更换后端时保持稳定。 |
+
+<a id="deepseek-aidsh-customer-service-database"></a>
+
+## `@deepseek-ai/dsh-customer-service-database`
+
+### `query_business_data`
+
+仅使用 `search_business_schema` 返回的表、字段、用法和关联，执行一条结构化、参数化、只读的 SELECT。不得提交 SQL、数据库名、StoreId、TenantId、UID、手机号或其他身份值；实时授权后由服务端注入范围与受支持的值来源。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "dataSource": {
+      "type": "string",
+      "enum": [
+        "main",
+        "finance"
+      ]
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name returned by search_business_schema."
+        },
+        "alias": {
+          "type": "string",
+          "description": "Query-local SQL-safe alias."
+        }
+      },
+      "required": [
+        "table",
+        "alias"
+      ]
+    },
+    "select": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tableAlias": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string",
+            "description": "Catalog field, or * for an authorized count."
+          },
+          "outputName": {
+            "type": "string",
+            "description": "SQL-safe business result key."
+          },
+          "aggregate": {
+            "type": "string",
+            "enum": [
+              "count",
+              "sum",
+              "min",
+              "max"
+            ]
+          }
+        },
+        "required": [
+          "tableAlias",
+          "column",
+          "outputName"
+        ]
+      }
+    },
+    "joins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "inner",
+              "left"
+            ]
+          },
+          "table": {
+            "type": "string"
+          },
+          "alias": {
+            "type": "string"
+          },
+          "leftAlias": {
+            "type": "string"
+          },
+          "leftColumn": {
+            "type": "string"
+          },
+          "rightAlias": {
+            "type": "string"
+          },
+          "rightColumn": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "table",
+          "alias",
+          "leftAlias",
+          "leftColumn",
+          "rightAlias",
+          "rightColumn"
+        ]
+      }
+    },
+    "filters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tableAlias": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string",
+            "enum": [
+              "eq",
+              "neq",
+              "gt",
+              "gte",
+              "lt",
+              "lte",
+              "contains",
+              "prefix",
+              "in",
+              "is-null",
+              "is-not-null"
+            ]
+          },
+          "valueSource": {
+            "type": "string",
+            "enum": [
+              "literal",
+              "member-mobile",
+              "operator-uid",
+              "unclaimed-member",
+              "store-today",
+              "store-now"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "Only for a single literal value."
+          },
+          "values": {
+            "type": "array",
+            "description": "Only for in + literal.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "tableAlias",
+          "column",
+          "operator"
+        ]
+      }
+    },
+    "orderBy": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tableAlias": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ]
+          }
+        },
+        "required": [
+          "tableAlias",
+          "column",
+          "direction"
+        ]
+      }
+    },
+    "limit": {
+      "type": "integer"
+    },
+    "distinct": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "dataSource",
+    "root",
+    "select"
+  ]
+}
+```
+
+来源：[`packages/database/customer-service-database/src/index.ts`](../packages/database/customer-service-database/src/index.ts)
+
+### `search_business_schema`
+
+在组装查询前搜索经审核的客服数据库目录。结果是结构策略，不是实时客户事实。模型根据尚未解决的业务问题选择搜索词；这里不应用固定的问题到表路由。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Whitespace-separated business, table, or field terms."
+    },
+    "dataSource": {
+      "type": "string",
+      "description": "Optional logical source filter.",
+      "enum": [
+        "main",
+        "finance"
+      ]
+    }
+  },
+  "required": [
+    "query"
+  ]
+}
+```
+
+来源：[`packages/database/customer-service-database/src/index.ts`](../packages/database/customer-service-database/src/index.ts)
+
+客服 profile 只在 Database 模式挂载这组工具。模型搜索经审核的结构并编写结构化计划；传输层拥有的身份范围、参数化 SQL 编译、连接选择与执行都留在插件内部。
 
 <a id="deepseek-aidsh-tool-ask-user"></a>
 

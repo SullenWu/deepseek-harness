@@ -6,8 +6,9 @@
  * `.agents/notes/implemented/process/2026-07-02-tool-schema-catalog.md`.
  */
 
-import { globSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, resolve } from 'node:path'
+import { globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
@@ -67,6 +68,7 @@ import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import VmWorkflowEngine from '@deepseek-ai/dsh-workflow-worker-thread'
 import * as ToolRalph from '@deepseek-ai/dsh-tool-ralph'
 import * as ToolWorkflow from '@deepseek-ai/dsh-tool-workflow'
+import * as CustomerServiceDatabase from '@deepseek-ai/dsh-customer-service-database'
 import { githubSlug } from './verify-md-links.ts'
 
 /** Attachment seam marker that makes the attachments-conditional `read_image` schema harvestable. */
@@ -187,6 +189,70 @@ export interface ToolPackage {
  * guard proves it is exhaustive against the on-disk glob.
  */
 const TOOL_PACKAGES: ToolPackage[] = [
+  {
+    pkg: '@deepseek-ai/dsh-customer-service-database',
+    dir: 'customer-service-database',
+    source: 'packages/database/customer-service-database/src/index.ts',
+    requires: ['ctx.tools', 'reviewed product skill catalog', 'server-local read-only MySQL configuration'],
+    writes: ['tool/call', 'tool/result', 'read-only MySQL transaction at execution time'],
+    async mount(ctx) {
+      const fixtureRoot = mkdtempSync(join(tmpdir(), 'dsh-tool-catalog-customer-database-'))
+      const skillRoot = join(fixtureRoot, 'kexiaomi-product-agent')
+      const runtime = join(skillRoot, 'runtime')
+      const catalog = join(skillRoot, 'references', 'database')
+      mkdirSync(runtime, { recursive: true })
+      mkdirSync(catalog, { recursive: true })
+      writeFileSync(join(runtime, 'data-access.local.json'), JSON.stringify({
+        schemaVersion: 1,
+        productCode: 'kexiaomi',
+        mainConnectionName: 'CatalogReadOnly',
+        connections: [{
+          name: 'CatalogReadOnly',
+          providerName: 'MySql',
+          connectionString: 'Server=127.0.0.1;Database=catalog;User Id=readonly;Password=catalog-only;',
+        }],
+        tenantRoutes: [],
+        financeFallback: null,
+        executionPolicy: {
+          readOnly: true,
+          commandTimeoutSeconds: 5,
+          maxRows: 20,
+          maxFields: 16,
+          maxJoins: 4,
+          maxSerializedCharacters: 12_000,
+        },
+      }))
+      writeFileSync(join(catalog, 'database-agent-query-catalog.jsonl'), `${JSON.stringify({
+        policyVersion: 2,
+        scopeVersion: 2,
+        dataSource: 'main',
+        table: 'catalog_fixture',
+        domain: 'catalog',
+        businessGroup: 'catalog',
+        audience: 'merchant-customer-service',
+        authority: 'primary-business-source',
+        fieldPolicy: 'reviewed-business-fields',
+        comment: 'tool catalog fixture',
+        scopeColumns: ['store_id', 'tenant_id'],
+        rowCountAggregates: ['count'],
+        fields: [],
+      })}\n`)
+      writeFileSync(join(catalog, 'database-agent-query-relations.jsonl'), '')
+      try {
+        await ctx.plugin(CustomerServiceDatabase, {
+          skillRoot: fixtureRoot,
+          productCode: 'kxm_pc',
+          storeId: 1,
+          operatorUid: 1,
+          merchantProfileVerified: true,
+        })
+      } finally {
+        rmSync(fixtureRoot, { recursive: true, force: true })
+      }
+    },
+    note:
+      'The customer-service profile mounts this pair only under Database mode. The model searches reviewed schema and authors a structured plan; transport-owned identity scope, parameterized SQL compilation, connection selection, and execution remain inside the plugin.',
+  },
   {
     pkg: '@deepseek-ai/dsh-tool-ask-user',
     dir: 'tool-ask-user',

@@ -1,0 +1,196 @@
+{
+  "businessRowsRead": false,
+  "collectionFailures": [
+    {
+      "connectionAliases": [
+        "TenantData0"
+      ],
+      "errorCode": 1049,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_0",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData1"
+      ],
+      "errorCode": 1049,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_1",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData2"
+      ],
+      "errorCode": 2013,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_2",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData3"
+      ],
+      "errorCode": 2013,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_3",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData4"
+      ],
+      "errorCode": 2013,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_4",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData5"
+      ],
+      "errorCode": 2013,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_5",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData6"
+      ],
+      "errorCode": 2013,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_6",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData7"
+      ],
+      "errorCode": 2013,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_7",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "connectionAliases": [
+        "TenantData8"
+      ],
+      "errorCode": 2013,
+      "errorType": "OperationalError",
+      "roles": [
+        "finance-shard"
+      ],
+      "schema": "nutbooking_consumption_8",
+      "structureCoveredByTemplate": true,
+      "structureSourceSchema": "nutbooking_consumption"
+    }
+  ],
+  "columnCount": 7682,
+  "complete": true,
+  "credentialsWritten": false,
+  "financialShardStructureGroups": [
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schemas": [
+        "nutbooking_consumption",
+        "nutbooking_consumption_0",
+        "nutbooking_consumption_1",
+        "nutbooking_consumption_2",
+        "nutbooking_consumption_3",
+        "nutbooking_consumption_4",
+        "nutbooking_consumption_5",
+        "nutbooking_consumption_6",
+        "nutbooking_consumption_7",
+        "nutbooking_consumption_8"
+      ]
+    }
+  ],
+  "foreignKeyCount": 0,
+  "generatedAtUtc": "2026-08-29T11:36:50+00:00",
+  "indexCount": 781,
+  "inheritedSchemas": [
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_0",
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_1",
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_2",
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_3",
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_4",
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_5",
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_6",
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_7",
+      "structureSourceSchema": "nutbooking_consumption"
+    },
+    {
+      "fingerprint": "8b5518679630b9d5bb15f861b0156ce04bd6a63ede6972d4077f87165ac69cbf",
+      "schema": "nutbooking_consumption_8",
+      "structureSourceSchema": "nutbooking_consumption"
+    }
+  ],
+  "liveCollectionComplete": false,
+  "schemaCount": 11,
+  "structuralCoverageComplete": true,
+  "tableRecordCount": 493
+}
