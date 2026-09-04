@@ -44,4 +44,4 @@ worktrees/
 .typert-*/
 # Server-local customer-service model credentials must never enter source control.
 integrations/customer-service-api/customer-service.model.json
-/.vs/deepseek-harness.slnx/FileContentIndex
+.vs
