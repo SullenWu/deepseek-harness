@@ -74,6 +74,17 @@ function Write-ModelConfiguration {
         '<configured>'
     }
     Write-ConfigurationValue 'apiKey' $ApiKeyStatus
+
+    $BusinessDataMode = Get-JsonProperty $Model 'businessDataMode'
+    if ($BusinessDataMode -eq 'Database') {
+        Write-ConfigurationValue 'activeBusinessDataTools' 'search_business_schema, query_business_data'
+    }
+    elseif ($BusinessDataMode -eq 'ApiMcp') {
+        Write-ConfigurationValue 'activeBusinessDataTools' 'search_capabilities, invoke_capability'
+    }
+    else {
+        Write-ConfigurationValue 'activeBusinessDataTools' '<unknown>'
+    }
 }
 
 function Write-StartupConfiguration {
@@ -83,6 +94,7 @@ function Write-StartupConfiguration {
         [Parameter(Mandatory = $true)][string]$Runtime,
         [Parameter(Mandatory = $true)][string]$RuntimeRg,
         [Parameter(Mandatory = $true)][string]$Server,
+        [Parameter(Mandatory = $true)][string]$PatchFile,
         [Parameter(Mandatory = $true)][string]$ModelConfig,
         [Parameter(Mandatory = $true)][string]$EffectiveDshBin
     )
@@ -94,11 +106,13 @@ function Write-StartupConfiguration {
     Write-ConfigurationValue 'Runtime rg' $RuntimeRg
     Write-ConfigurationValue 'Effective DSH bin' $EffectiveDshBin
     Write-ConfigurationValue 'Server' $Server
+    Write-ConfigurationValue 'Patch file' $PatchFile
     Write-ConfigurationValue 'Model config' $ModelConfig
     foreach ($Name in @(
         'DCS_DSH_HOME',
         'DCS_SKILL_DIR',
         'DCS_WORKSPACE',
+        'DCS_PATCH_FILE',
         'DCS_MCP_URL',
         'DCS_HOST',
         'DCS_PORT',
@@ -117,6 +131,7 @@ $Runtime = Join-Path $Root 'runtime\deepseek-harness-sdk-runtime-win-x64.exe'
 $RuntimeRg = Join-Path $Root 'runtime\deepseek-harness-sdk-runtime-win-x64-rg.exe'
 $ServiceDirectory = Join-Path $Root 'integrations\customer-service-api'
 $Server = Join-Path $ServiceDirectory 'server.py'
+$PatchFile = Join-Path $ServiceDirectory 'customer-service.cordis.patch.yml'
 $ModelConfig = Join-Path $ServiceDirectory 'customer-service.model.json'
 
 foreach ($RequiredFile in @($Python, $Runtime, $RuntimeRg)) {
@@ -132,6 +147,7 @@ if (-not (Test-Path -LiteralPath $ModelConfig -PathType Leaf)) {
 Set-DefaultEnvironmentVariable 'DCS_DSH_HOME' (Join-Path $Root 'data\dsh-home')
 Set-DefaultEnvironmentVariable 'DCS_SKILL_DIR' (Join-Path $Root 'skills')
 Set-DefaultEnvironmentVariable 'DCS_WORKSPACE' (Join-Path $Root 'workspace')
+Set-DefaultEnvironmentVariable 'DCS_PATCH_FILE' $PatchFile
 Set-DefaultEnvironmentVariable 'DCS_MCP_URL' 'http://127.0.0.1:5301/mcp'
 Set-DefaultEnvironmentVariable 'DCS_HOST' '127.0.0.1'
 Set-DefaultEnvironmentVariable 'DCS_PORT' '8765'
@@ -140,14 +156,18 @@ Set-DefaultEnvironmentVariable 'DCS_MODEL_CONFIG_FILE' $ModelConfig
 
 $EffectiveDshBin = [Environment]::GetEnvironmentVariable('DCS_DSH_BIN')
 $EffectiveModelConfig = [Environment]::GetEnvironmentVariable('DCS_MODEL_CONFIG_FILE')
+$EffectivePatchFile = [Environment]::GetEnvironmentVariable('DCS_PATCH_FILE')
 if (-not (Test-Path -LiteralPath $EffectiveDshBin -PathType Leaf)) {
     throw "DCS_DSH_BIN does not exist: $EffectiveDshBin"
+}
+if (-not (Test-Path -LiteralPath $EffectivePatchFile -PathType Leaf)) {
+    throw "DCS_PATCH_FILE does not exist: $EffectivePatchFile"
 }
 if (-not (Test-Path -LiteralPath $EffectiveModelConfig -PathType Leaf)) {
     throw "DCS_MODEL_CONFIG_FILE does not exist: $EffectiveModelConfig"
 }
 
-Write-StartupConfiguration $Root $Python $Runtime $RuntimeRg $Server $EffectiveModelConfig $EffectiveDshBin
+Write-StartupConfiguration $Root $Python $Runtime $RuntimeRg $Server $EffectivePatchFile $EffectiveModelConfig $EffectiveDshBin
 Write-Host "Starting customer-service API: http://$($env:DCS_HOST):$($env:DCS_PORT)" -ForegroundColor Green
 Write-Host "Health endpoint: http://$($env:DCS_HOST):$($env:DCS_PORT)/health/live"
 & $Python $Server

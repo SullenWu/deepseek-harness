@@ -61,7 +61,7 @@ PYTHONPATH=python/sdk/src python integrations/customer-service-api/server.py
 
 在 `customer-service.model.json` 中设置 `businessDataMode` 及对应的数据源参数。`ApiMcp` 使用 `apiMcpUrl`、`apiMcpToolCallTimeoutMilliseconds` 和 `apiMcpFailOnStartupError`，并且只挂载 `search_capabilities` 和 `invoke_capability`。`Database` 使用 `databaseMaxCatalogTables`，并且只挂载 `search_business_schema` 和 `query_business_data`。profile 绝不会同时发布两组工具，也不会在请求内从一项数据源自动回退到另一项。
 
-Database 模式加载选中产品 skill 中被 Git 忽略的 `runtime/data-access.local.json`；复制已跟踪的 `data-access.example.json`，只填写只读 MySQL 账号，并确保本地文件不进入 Git。每项请求必须携带 `context.storeId`、`context.operatorUid` 和 `context.merchantProfileVerified=true`。数据库插件会在每次结构化查询前重新核验当前操作人／门店关系，并从该实时记录解析 TenantId。模型不能通过工具参数提交 SQL、数据库名、连接名、StoreId、TenantId、UID 或手机号。
+Database 模式只在请求携带 `context.storeId`、`context.operatorUid` 和 `context.merchantProfileVerified=true` 时挂载 `search_business_schema` 和 `query_business_data`。未核验请求仍会启动 Harness，但不会发布业务数据工具组，因此 agent 只能使用产品 skill 文件回答、追问一个澄清问题或转人工。已核验的 Database 请求会加载选中产品 skill 中被 Git 忽略的 `runtime/data-access.local.json`；复制已跟踪的 `data-access.example.json`，只填写只读 MySQL 账号，并确保本地文件不进入 Git。数据库插件会在每次结构化查询前重新核验当前操作人／门店关系，并从该实时记录解析 TenantId。模型不能通过工具参数提交 SQL、数据库名、连接名、StoreId、TenantId、UID 或手机号。
 
 ## 构建 Windows 部署组合包
 

@@ -49,6 +49,9 @@ describe('customer-service Windows release builder', () => {
 
     expect(template).toContain("Write-Host 'Runtime configuration:'")
     expect(template).toContain("Write-Host 'Model configuration:'")
+    expect(template).toContain("Set-DefaultEnvironmentVariable 'DCS_PATCH_FILE' $PatchFile")
+    expect(template).toContain("Write-ConfigurationValue 'Patch file' $PatchFile")
+    expect(template).toContain("Write-ConfigurationValue 'activeBusinessDataTools'")
     expect(template).toContain("Write-ConfigurationValue 'apiKey' $ApiKeyStatus")
     expect(template).not.toContain("Write-ConfigurationValue 'apiKey' (Get-JsonProperty")
   })

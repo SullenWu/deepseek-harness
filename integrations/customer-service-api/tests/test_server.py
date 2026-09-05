@@ -7,6 +7,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,8 +34,11 @@ def test_customer_service_profile_mounts_time_and_mutually_exclusive_data_source
     assert "name: '@deepseek-ai/dsh-customer-service-database'" in patch
     assert "process.env.DCS_BUSINESS_DATA_MODE !== 'ApiMcp'" in patch
     assert "process.env.DCS_BUSINESS_DATA_MODE !== 'Database'" in patch
+    assert "process.env.DCS_DATABASE_MERCHANT_VERIFIED !== 'true'" in patch
     assert "不得按固定问法、关键词、页面、表、接口或答案编排分支" in patch
     assert "实时结论必须由本轮成功观察明确绑定对象、属性、值、适用范围或时间" in patch
+    assert "业务数据工具能力只来自本轮可见工具和本轮成功观察" in patch
+    assert "API-MCP 调用能力" not in patch
     assert "失败调用不得原样重复" in patch
     assert "Number(process.env.DCS_MCP_TOOL_CALL_TIMEOUT_MILLISECONDS)" in patch
     assert "process.env.DCS_MCP_FAIL_ON_STARTUP_ERROR === 'true'" in patch
@@ -161,6 +165,200 @@ def test_database_mode_injects_trusted_scope_and_current_message_mobile(
     assert environment["DCS_DATABASE_OPERATOR_UID"] == "34"
     assert environment["DCS_DATABASE_MERCHANT_VERIFIED"] == "true"
     assert environment["DCS_DATABASE_MEMBER_MOBILE"] == "13800138000"
+
+
+@pytest.mark.parametrize(
+    ("context", "message"),
+    [
+        ({"storeId": "12", "operatorUid": 34, "merchantProfileVerified": True}, "context.storeId must be a positive integer"),
+        ({"storeId": 12, "operatorUid": True, "merchantProfileVerified": True}, "context.operatorUid must be a positive integer"),
+    ],
+)
+def test_database_mode_rejects_invalid_verified_transport_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    context: dict[str, object],
+    message: str,
+) -> None:
+    model_path = tmp_path / "customer-service.model.json"
+    payload = valid_model_config()
+    payload["businessDataMode"] = "Database"
+    model_path.write_text(json.dumps(payload), encoding="utf-8")
+    skill_dir = tmp_path / "skills"
+    skill_dir.mkdir()
+    monkeypatch.setenv("DCS_DSH_HOME", str(tmp_path / "dsh-home"))
+    monkeypatch.setenv("DCS_DSH_BIN", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_PATCH_FILE", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_SKILL_DIR", str(skill_dir))
+    monkeypatch.setenv("DCS_MODEL_CONFIG_FILE", str(model_path))
+    config = SERVER.ApiConfig.from_environment()
+
+    with pytest.raises(SERVER.RequestError, match=message):
+        SERVER.CustomerServiceRuntime(config).run(
+            {
+                "conversationId": "conversation-1",
+                "messageId": "message-1",
+                "productCode": "kxm_pc",
+                "entryPoint": "",
+                "message": "查会员卡",
+                "context": context,
+                "mcp": {},
+                "attachments": [],
+            }
+        )
+
+
+@pytest.mark.parametrize("context", [{}, {"merchantProfileVerified": False}])
+def test_database_mode_unverified_request_launches_without_business_data_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    context: dict[str, object],
+) -> None:
+    model_path = tmp_path / "customer-service.model.json"
+    payload = valid_model_config()
+    payload["businessDataMode"] = "Database"
+    model_path.write_text(json.dumps(payload), encoding="utf-8")
+    skill_dir = tmp_path / "skills"
+    skill_dir.mkdir()
+    monkeypatch.setenv("DCS_DSH_HOME", str(tmp_path / "dsh-home"))
+    monkeypatch.setenv("DCS_DSH_BIN", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_PATCH_FILE", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_SKILL_DIR", str(skill_dir))
+    monkeypatch.setenv("DCS_MODEL_CONFIG_FILE", str(model_path))
+    config = SERVER.ApiConfig.from_environment()
+    captured: dict[str, object] = {}
+
+    class FakeHarness:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def __enter__(self) -> "FakeHarness":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def run(self, blocks: object, session_id: str) -> object:
+            return SimpleNamespace(
+                final_response='{"action":"answer","replyText":"请从排课页面查看明天课程。","reason":"未核验商户范围，只能回答产品资料。"}',
+                session_id=session_id,
+                finish_reason="stop",
+            )
+
+    monkeypatch.setattr(SERVER, "DeepSeekHarness", FakeHarness)
+
+    response = SERVER.CustomerServiceRuntime(config).run(
+        {
+            "conversationId": "conversation-1",
+            "messageId": "message-1",
+            "productCode": "kxm_pc",
+            "entryPoint": "",
+            "message": "明天排课怎么看",
+            "context": context,
+            "mcp": {},
+            "attachments": [],
+        }
+    )
+
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert environment["DCS_DATABASE_MERCHANT_VERIFIED"] == "false"
+    assert response["action"] == "answer"
+    stderr = capsys.readouterr().err
+    assert "businessDataMode=Database" in stderr
+    assert "activeBusinessDataTools=none" in stderr
+    assert "search_business_schema" not in stderr
+
+
+def test_request_handler_logs_bad_request_reason(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+    handler = object.__new__(SERVER.CustomerServiceRequestHandler)
+    handler.path = "/v1/customer-service/run"
+    handler._read_json_body = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        SERVER.RequestError("context.storeId must be a positive integer in Database mode")
+    )
+    handler._write_json = lambda status, payload: captured.update(  # type: ignore[method-assign]
+        {"status": status, "payload": payload}
+    )
+
+    handler.do_POST()
+
+    assert captured["status"] == SERVER.HTTPStatus.BAD_REQUEST
+    assert captured["payload"] == {
+        "error": "invalid_request",
+        "message": "context.storeId must be a positive integer in Database mode",
+    }
+    assert (
+        "invalid customer-service request: "
+        "context.storeId must be a positive integer in Database mode"
+    ) in capsys.readouterr().err
+
+
+def test_database_mode_logs_and_launches_only_database_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model_path = tmp_path / "customer-service.model.json"
+    payload = valid_model_config()
+    payload["businessDataMode"] = "Database"
+    model_path.write_text(json.dumps(payload), encoding="utf-8")
+    skill_dir = tmp_path / "skills"
+    skill_dir.mkdir()
+    monkeypatch.setenv("DCS_DSH_HOME", str(tmp_path / "dsh-home"))
+    monkeypatch.setenv("DCS_DSH_BIN", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_PATCH_FILE", str(SERVER_PATH))
+    monkeypatch.setenv("DCS_SKILL_DIR", str(skill_dir))
+    monkeypatch.setenv("DCS_MODEL_CONFIG_FILE", str(model_path))
+    config = SERVER.ApiConfig.from_environment()
+    captured: dict[str, object] = {}
+
+    class FakeHarness:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def __enter__(self) -> "FakeHarness":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def run(self, blocks: object, session_id: str) -> object:
+            return SimpleNamespace(
+                final_response='{"action":"answer","replyText":"已确认","reason":""}',
+                session_id=session_id,
+                finish_reason="stop",
+            )
+
+    monkeypatch.setattr(SERVER, "DeepSeekHarness", FakeHarness)
+
+    SERVER.CustomerServiceRuntime(config).run(
+        {
+            "conversationId": "conversation-1",
+            "messageId": "message-1",
+            "productCode": "kxm_pc",
+            "entryPoint": "",
+            "message": "查会员卡",
+            "context": {
+                "storeId": 12,
+                "operatorUid": 34,
+                "merchantProfileVerified": True,
+            },
+            "mcp": {},
+            "attachments": [],
+        }
+    )
+
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert environment["DCS_BUSINESS_DATA_MODE"] == "Database"
+    stderr = capsys.readouterr().err
+    assert "businessDataMode=Database" in stderr
+    assert "activeBusinessDataTools=search_business_schema,query_business_data" in stderr
+    assert "search_capabilities" not in stderr
 
 
 @pytest.mark.parametrize(

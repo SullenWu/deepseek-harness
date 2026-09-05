@@ -325,6 +325,36 @@ describe('boot with user patches', () => {
     }
   })
 
+  it('evaluates disabled expressions on entries inserted by a patch', async () => {
+    const dir = tmp()
+    const userDir = tmp()
+    writeFileSync(join(userDir, 'noop.mjs'), 'export function apply() {}\n')
+    writeFileSync(join(userDir, PROFILE_PATCH_FILENAME), [
+      '- insert:',
+      '    - id: api-mcp',
+      '      name: ./noop.mjs',
+      "      disabled: !!js process.env.DSH_APP_BOOT_DATA_MODE !== 'ApiMcp'",
+      '    - id: database',
+      '      name: ./noop.mjs',
+      "      disabled: !!js process.env.DSH_APP_BOOT_DATA_MODE !== 'Database'",
+      '',
+    ].join('\n'))
+    process.env['DSH_APP_BOOT_DATA_MODE'] = 'Database'
+    const ctx = await boot(NAME, writeTree(dir), loadOptionalPatches(NAME, join(userDir, PROFILE_PATCH_FILENAME)))
+    try {
+      const entries = [...ctx.loader.entries()]
+      const apiMcp = entries.find(entry => entry.options.id === 'api-mcp')
+      const database = entries.find(entry => entry.options.id === 'database')
+      expect(apiMcp?.disabled).toBe(true)
+      expect(apiMcp?.fiber).toBeUndefined()
+      expect(database?.disabled).toBe(false)
+      expect(database?.fiber).toBeDefined()
+    } finally {
+      await ctx.fiber.dispose()
+      delete process.env['DSH_APP_BOOT_DATA_MODE']
+    }
+  })
+
   it('mounts no patch layer for an absent or empty user layer', async () => {
     const dir = tmp()
     const ctx = await boot(NAME, writeTree(dir), loadOptionalPatches(NAME, join(tmp(), PROFILE_PATCH_FILENAME)))

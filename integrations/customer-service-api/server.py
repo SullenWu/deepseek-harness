@@ -395,6 +395,42 @@ def parse_agent_response(raw_response: str) -> dict[str, str]:
     return {"action": action, "replyText": reply_text.strip(), "reason": reason.strip()}
 
 
+def _database_scope_verified(request: dict[str, Any]) -> bool:
+    return request.get("context", {}).get("merchantProfileVerified") is True
+
+
+def _business_data_tool_names(mode: str, database_scope_verified: bool = True) -> tuple[str, ...]:
+    if mode == "Database":
+        if not database_scope_verified:
+            return ()
+        return ("search_business_schema", "query_business_data")
+    if mode == "ApiMcp":
+        return ("search_capabilities", "invoke_capability")
+    raise RuntimeError("businessDataMode must be Database or ApiMcp")
+
+
+def _require_database_request_context(request: dict[str, Any]) -> None:
+    context = request.get("context", {})
+    if not _database_scope_verified(request):
+        return
+    if type(context.get("storeId")) is not int or context["storeId"] < 1:
+        raise RequestError("context.storeId must be a positive integer in Database mode")
+    if type(context.get("operatorUid")) is not int or context["operatorUid"] < 1:
+        raise RequestError("context.operatorUid must be a positive integer in Database mode")
+
+
+def _log_startup_configuration(config: ApiConfig) -> None:
+    tools = ", ".join(_business_data_tool_names(config.business_data_mode))
+    print("customer-service-api configuration:", file=sys.stderr)
+    print(f"  businessDataMode: {config.business_data_mode}", file=sys.stderr)
+    print(f"  activeBusinessDataTools: {tools}", file=sys.stderr)
+    print(f"  patchFile: {config.patch_file}", file=sys.stderr)
+    print(f"  skillDir: {config.skill_dir}", file=sys.stderr)
+    print(f"  workspace: {config.workspace}", file=sys.stderr)
+    print(f"  dshHome: {config.dsh_home}", file=sys.stderr)
+    print(f"  dshBin: {config.dsh_bin}", file=sys.stderr)
+
+
 class CustomerServiceRuntime:
     """Run isolated Harness processes while serializing access to one session store."""
 
@@ -404,8 +440,25 @@ class CustomerServiceRuntime:
 
     def run(self, request: dict[str, Any]) -> dict[str, str]:
         """Execute one customer-service turn and return the Harness-owned decision."""
+        if self._config.business_data_mode == "Database":
+            _require_database_request_context(request)
         trace_id = f"dcs_{uuid.uuid4().hex}"
         environment = self._runtime_environment(request, trace_id)
+        active_tools = ",".join(
+            _business_data_tool_names(
+                environment["DCS_BUSINESS_DATA_MODE"],
+                environment["DCS_DATABASE_MERCHANT_VERIFIED"] == "true",
+            )
+        ) or "none"
+        print(
+            "customer-service-api run: "
+            f"traceId={trace_id} "
+            f"sessionId=customer-service-{request['conversationId']} "
+            f"businessDataMode={environment['DCS_BUSINESS_DATA_MODE']} "
+            f"activeBusinessDataTools={active_tools} "
+            f"patchFile={self._config.patch_file}",
+            file=sys.stderr,
+        )
         with self._lock:
             with DeepSeekHarness(
                 dsh_home=str(self._config.dsh_home),
@@ -517,6 +570,7 @@ class CustomerServiceRequestHandler(BaseHTTPRequestHandler):
             request = parse_request(self._read_json_body())
             response = self.server.runtime.run(request)
         except RequestError as exc:
+            self.log_error("invalid customer-service request: %s", exc)
             self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_request", "message": str(exc)})
             return
         except Exception as exc:  # The HTTP process stays alive after one failed Harness turn.
@@ -558,6 +612,7 @@ class CustomerServiceRequestHandler(BaseHTTPRequestHandler):
 def main() -> None:
     """Start the blocking HTTP listener until SIGINT or SIGTERM stops the process."""
     config = ApiConfig.from_environment()
+    _log_startup_configuration(config)
     server = CustomerServiceHttpServer(config)
     print(f"customer-service-api listening on http://{config.host}:{config.port}", file=sys.stderr)
     try:
